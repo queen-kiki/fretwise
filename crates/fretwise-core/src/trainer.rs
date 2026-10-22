@@ -492,11 +492,26 @@ mod tests {
     }
 
     #[test]
+    fn config_from_before_scale_files_loads() {
+        use crate::scale::ScaleKind;
+        let old = r#"{"min_fret": 5, "max_fret": 8, "strings": [true, true, true, true, true, true],
+            "scale": {"root": 9, "kind": "MinorPentatonic"}, "order": "UpDown", "labels": "Degree",
+            "style": "NameOnString"}"#;
+        let c: TrainerConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(c.scale, Scale { root: 9, kind: ScaleKind::by_id("minor-pentatonic").unwrap() });
+        assert_eq!(c.order, Order::UpDown);
+        // Saved again, it's the new format, and reads back the same.
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains(r#""kind":"minor-pentatonic""#), "{json}");
+        assert_eq!(serde_json::from_str::<TrainerConfig>(&json).unwrap(), c);
+    }
+
+    #[test]
     fn up_down_walks_the_pattern() {
         use crate::scale::ScaleKind;
         let mut t = trainer();
         // A minor pentatonic, box 1.
-        t.config.scale = Scale { root: 9, kind: ScaleKind::MinorPentatonic };
+        t.config.scale = Scale { root: 9, kind: ScaleKind::by_id("minor-pentatonic").unwrap() };
         t.config.min_fret = 5;
         t.config.max_fret = 8;
         t.config.order = Order::UpDown;

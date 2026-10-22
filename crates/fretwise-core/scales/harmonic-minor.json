@@ -1,0 +1,8 @@
+{
+  "id": "harmonic-minor",
+  "name": "harmonic minor",
+  "group": "minor",
+  "order": 200,
+  "intervals": [0, 2, 3, 5, 7, 8, 11],
+  "degrees": ["1", "2", "b3", "4", "5", "b6", "7"]
+}

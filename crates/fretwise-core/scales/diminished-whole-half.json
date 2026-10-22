@@ -1,0 +1,8 @@
+{
+  "id": "diminished-whole-half",
+  "name": "diminished (whole-half)",
+  "group": "exotic",
+  "order": 305,
+  "intervals": [0, 2, 3, 5, 6, 8, 9, 11],
+  "degrees": ["1", "2", "b3", "4", "b5", "b6", "6", "7"]
+}

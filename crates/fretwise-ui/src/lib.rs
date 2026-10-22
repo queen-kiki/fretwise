@@ -510,7 +510,7 @@ impl FretwiseUi {
             };
             for pos in positions {
                 let note = self.tuning.note_at(pos);
-                let is_root = note.pitch_class() == scale.root % 12 && scale.kind != ScaleKind::Chromatic;
+                let is_root = note.pitch_class() == scale.root % 12 && !scale.kind.is_chromatic();
                 // Roots stand out from the rest, in either theme.
                 let (fill, text) = match (visuals.dark_mode, is_root) {
                     (true, false) => (Color32::from_rgb(70, 50, 66), visuals.text_color()),
@@ -560,10 +560,11 @@ impl FretwiseUi {
             if knob(ui, "root", "Key", &mut root, &roots) {
                 cfg.scale.root = root as u8;
             }
-            let mut kind = ScaleKind::ALL.iter().position(|k| *k == cfg.scale.kind).unwrap_or(0);
-            let kinds: Vec<&str> = ScaleKind::ALL.iter().map(|k| k.name()).collect();
+            let all: Vec<ScaleKind> = ScaleKind::all().collect();
+            let mut kind = all.iter().position(|k| *k == cfg.scale.kind).unwrap_or(0);
+            let kinds: Vec<&str> = all.iter().map(|k| k.name()).collect();
             if knob(ui, "kind", "Scale", &mut kind, &kinds) {
-                cfg.scale.kind = ScaleKind::ALL[kind];
+                cfg.scale.kind = all[kind];
             }
             rack_group(ui, "Order", |ui| {
                 segmented(

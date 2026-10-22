@@ -198,6 +198,12 @@ impl Drop for App {
 }
 
 fn main() -> eframe::Result<()> {
+    // Scales first: loading the saved state looks them up by id.
+    // Extra scales can go in %APPDATA%\Fretwise\scales\, one JSON file each.
+    let user_scales = dirs::config_dir().map(|d| d.join("Fretwise").join("scales"));
+    for e in fretwise_core::scale::init(user_scales.as_deref()) {
+        eprintln!("skipping scale {e}");
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Fretwise")
