@@ -10,7 +10,10 @@ keep the current behaviour).
 
 Baseline: `cargo test --workspace` passes (47 tests), and
 `cargo clippy --workspace --all-targets` gives one warning
-(`needless_range_loop` in `pitch.rs`).
+(`needless_range_loop` in `pitch.rs`). After this pass: 55 tests, no
+clippy or rustdoc warnings, and before/after screenshots of Learn, free
+practice (notes and chords), the tuner, stats, settings, About and the
+deck browser are pixel-identical apart from the live input meter.
 
 ## Bugs and correctness risks
 
@@ -32,6 +35,8 @@ The weighted picker (`SrsCard::weight`) still treats it as overdue, so only
 the counts and screens are wrong. Proposed fix: due means "has a due time
 and it has passed", `self.due > 0.0 && self.due <= unix_now`.
 
+**Fixed** at the user's request (`e6d2d77`), with tests.
+
 ### B2. Keys 1–4 re-grade the previous card at any time (medium)
 
 `FretwiseUi::show` (`lib.rs:240`) calls `LearnTrainer::regrade` on every
@@ -43,12 +48,16 @@ After a skip, the skipped card can also be re-graded from Again to Easy.
 Proposed fix: only re-grade while the trainer is resolved (the pause after a
 completed card).
 
+**Fixed** at the user's request (`9dc70a5`), with a test.
+
 ### B3. "Reset progress" leaves chord-drill stats (medium)
 
 The Stats screen's reset (`lib.rs:1671`) clears the note trainer and Learn,
 but not `ChordTrainer`'s per-chord stats, streak and best streak, which are
 saved in `state.json` (`UiState.chord_progress`). Whether that's intended
 is the user's call. Proposed fix: reset the chord drill too.
+
+**Fixed** at the user's request (`9c3c2dc`), with a test.
 
 ### B4. Possible heap allocation on the audio thread (low)
 
@@ -58,6 +67,8 @@ a handful of peaks, so it stays on the stack in practice, but nothing
 bounds it below the allocation threshold. Proposed fix: `sort_unstable_by`,
 which never allocates; only the order of exactly equal amplitudes could
 differ.
+
+**Fixed** at the user's request (`30eaea8`).
 
 ### B5. Saved-state robustness (checked, no bug)
 
@@ -75,6 +86,9 @@ differ.
   `fretwise-app/src/audio.rs:373` and `:396`) don't lock or allocate, apart
   from B4. The error callbacks print, which is fine off the audio path.
 
+**Fixed** where noted: `notes_string` was removed (`fda5fda`). The
+`state.json.bad` overwrite is **deferred**.
+
 ## Structure
 
 ### S1. Chord listening is written out twice (high)
@@ -85,10 +99,15 @@ mask, strum window, heard strings, and the constants `STRUM_WINDOW`,
 `POLY_HOLD`, `CHORD_GATE_DB` (also in `learn.rs:144`). The reset of that
 state is repeated in `next` and `select_*` of both.
 
+**Fixed** (`eb14321`): `ChordListener` in `chord.rs`, with a new test for
+Learn's chord cards.
+
 ### S2. Random picking and the RNG are written out three times (high)
 
 `next_f64` (xorshift64*) is copied in `trainer.rs:409`, `chord.rs:667` and
 `learn.rs:661`, and the weighted pick loop around it in all three.
+
+**Fixed** (`783cf24`): `rng.rs`, with tests.
 
 ### S3. Loading a folder of JSON files is written out three times (high)
 
@@ -96,11 +115,16 @@ state is repeated in `next` and `select_*` of both.
 walk, `builtin_sources` and duplicate-id check; `scale.rs` and `deck.rs`
 also share the group sort.
 
+**Fixed** (`1b73b15`): `registry.rs`, with tests.
+
 ### S4. A scale's box and walk are worked out twice (high)
 
 `LearnTrainer::scale_sequence` (`learn.rs:631`) repeats
 `Trainer::fingering_positions`, `candidates` and `sequence`
 (`trainer.rs:239`–`279`), minus the string filter.
+
+**Fixed** (`bcdaff7`): `Scale::positions`, `Scale::trim_to_octaves` and
+`scale::walk`, with tests.
 
 ### S5. `fretwise-ui/src/lib.rs` is 1870 lines (high)
 
@@ -110,10 +134,16 @@ and blinking cursor; the three tabs repeat the rack panel frame and the
 neck-plus-terminal layout; the scale-pattern colours and dot sizes are
 written twice (`lib.rs:757`, `lib.rs:1175`).
 
+**Fixed**: shared helpers (`c69b723`), then one module per screen
+(`a40020b`); `lib.rs` is now 350 lines.
+
 ### S6. `widgets.rs` mixes unrelated widgets (medium)
 
 820 lines: the fretboard and its range strip, the knob, buttons, meters,
 the dropdown, sparkles and icons.
+
+**Fixed** (`c6ef07d`): `widgets/` with `fretboard`, `knob`, `controls` and
+`meters`.
 
 ### S7. Colours are defined in several places (high)
 
@@ -123,10 +153,17 @@ app repeats `BAD` (`main.rs:158`), and the pattern, heat-map and About
 colours are literals in `lib.rs`. `widgets::lerp_color` and `theme::lerp`
 are near-duplicates (one truncates, one rounds).
 
+**Fixed** (`8163901`): every shared colour is a named constant or function
+in `theme.rs`. The knob's own body shades stay local to it. **Deferred**:
+merging the two `lerp`s, since switching the knob and toggle to rounding
+would shift some pixels by one level.
+
 ### S8. Crate boundaries (checked, fine)
 
 `fretwise-core` depends only on serde; `fretwise-ui` only on egui 0.31,
 egui_extras and serde, with no eframe. Nothing is in the wrong crate.
+
+Nothing to do.
 
 ## Cleanups
 
@@ -141,6 +178,10 @@ egui_extras and serde, with no eframe. Nothing is in the wrong crate.
 - `ChordTrainerConfig.deck` no longer drives anything but must stay for
   saved state; its doc says so.
 
+**Fixed**: the browser branch and `chord_groups` (`51e3e6b`), the unused
+API (`fda5fda`). `ChordTrainerConfig.deck` is kept, since saved state needs
+it; its doc says so.
+
 ### C2. Stale comments and docs (high)
 
 - `srs.rs:3` says SM-2 state is stored in `PositionStats`; it's in
@@ -153,11 +194,17 @@ egui_extras and serde, with no eframe. Nothing is in the wrong crate.
   (now decks), and its architecture sketch is missing `chord`, `deck`,
   `learn`, `srs`, `poly`, `fft`, `fingering` and `chime`.
 
+**Fixed**: code comments (`fda5fda`), README (`3e7ffb4`).
+
 ### C3. Magic numbers (medium)
 
 The pause after a correct answer (0.6 s, 0.75 s, 1.1 s), the 0.2 s
 release in chord listening, the 35-cent tolerance and the 2 s feedback
 display time are bare literals. Named where they're touched by S1/S2.
+
+**Fixed** for the trainers' pauses and chord listening (`eb14321`,
+`fda5fda`) and the neck's 15 frets (`c69b723`). **Deferred**: UI layout
+sizes, which are design values best named in a design pass.
 
 ### C4. Clippy (high)
 
@@ -165,9 +212,22 @@ display time are bare literals. Named where they're touched by S1/S2.
 mostly flags `as` casts on audio math and `must_use`; not worth taking
 wholesale.
 
+**Fixed** (`465b959`). Pedantic **deferred**.
+
 ### C5. Saved maps aren't sorted (low)
 
 `LearnProgress.cards` and `ChordProgress.stats` are `HashMap`s, so
 `state.json` lists them in a random order each run and gets rewritten once
 after every start. Note positions are already sorted for clean diffs.
 Deferred: harmless, and changing the map type touches the public API.
+
+**Deferred**, as above.
+
+## Left for later
+
+- B5: keep more than one `state.json.bad`.
+- S7: one colour `lerp` for the theme and the widgets.
+- C3: name the UI's layout sizes in a design pass.
+- C4: pedantic clippy.
+- C5: sort `LearnProgress.cards` and `ChordProgress.stats` in `state.json`.
+- Wide-range fingering, already in `TODO.md`.
