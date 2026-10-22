@@ -1,0 +1,124 @@
+//! The stepped rotary knob.
+
+use std::f32::consts::PI;
+use std::hash::Hash;
+
+use egui::{pos2, vec2, Align2, Color32, CursorIcon, FontId, PopupCloseBehavior, Sense, Stroke, Ui};
+
+use super::lerp_color;
+
+/// Stepped rotary knob, plug-in style. Drag up/down or scroll to turn it,
+/// click for a list of the choices. Returns true when the choice changed.
+pub fn knob(ui: &mut Ui, id_salt: impl Hash, title: &str, index: &mut usize, choices: &[&str]) -> bool {
+    let n = choices.len().max(1);
+    let before = *index;
+    let size = vec2(92.0, 104.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    let id = ui.id().with(id_salt);
+    let popup_id = id.with("choices");
+
+    // Drag: 16 px per step, either direction; up/right turns clockwise.
+    if response.drag_started() {
+        ui.data_mut(|d| d.insert_temp(id, *index as f32));
+    }
+    if response.dragged() {
+        let delta = response.drag_delta();
+        let acc = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(*index as f32) + (delta.x - delta.y) / 16.0;
+        let acc = acc.clamp(0.0, (n - 1) as f32);
+        ui.data_mut(|d| d.insert_temp(id, acc));
+        *index = acc.round() as usize;
+    }
+    if response.hovered() {
+        let scroll = ui.input(|i| i.raw_scroll_delta.y);
+        if scroll > 0.0 {
+            *index = (*index + 1).min(n - 1);
+        } else if scroll < 0.0 {
+            *index = index.saturating_sub(1);
+        }
+    }
+    if response.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let response = response.on_hover_cursor(CursorIcon::ResizeVertical);
+    egui::popup_below_widget(ui, popup_id, &response, PopupCloseBehavior::CloseOnClick, |ui| {
+        ui.set_min_width(140.0);
+        for (i, c) in choices.iter().enumerate() {
+            if ui.selectable_label(i == *index, *c).clicked() {
+                *index = i;
+            }
+        }
+    });
+
+    let visuals = ui.visuals();
+    let painter = ui.painter();
+    let hot = response.hovered() || response.dragged();
+    painter.text(
+        pos2(rect.center().x, rect.top() + 6.0),
+        Align2::CENTER_CENTER,
+        title.to_uppercase(),
+        FontId::proportional(11.0),
+        visuals.weak_text_color(),
+    );
+
+    let c = pos2(rect.center().x, rect.top() + 54.0);
+    let r = 22.0;
+    let t = if n > 1 { *index as f32 / (n - 1) as f32 } else { 0.0 };
+    // 0 sits at 7 o'clock, full at 5 o'clock, clockwise.
+    let angle = |t: f32| 0.75 * PI + t * 1.5 * PI;
+    let at = |a: f32, radius: f32| c + vec2(a.cos(), a.sin()) * radius;
+    let arc = |from: f32, to: f32, radius: f32| -> Vec<egui::Pos2> {
+        let steps = 40;
+        (0..=steps).map(|i| at(angle(from + (to - from) * i as f32 / steps as f32), radius)).collect()
+    };
+
+    // Track and value arc, and a dot per step.
+    painter.add(egui::Shape::line(arc(0.0, 1.0, r + 7.0), Stroke::new(3.0_f32, visuals.extreme_bg_color)));
+    // The value arc runs blue → pink → white, the trans flag from edge to middle.
+    // Nothing to draw at the first step; zero-length segments still show a blip.
+    let steps = if t > 0.0 { 24 } else { 0 };
+    for i in 0..steps {
+        let (a, b) = (t * i as f32 / steps as f32, t * (i + 1) as f32 / steps as f32);
+        let color = crate::theme::pride_gradient((a + b) / 2.0);
+        painter.line_segment([at(angle(a), r + 7.0), at(angle(b), r + 7.0)], Stroke::new(3.0_f32, color));
+    }
+    if n <= 24 {
+        for i in 0..n {
+            let ti = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+            let color = if i == *index {
+                visuals.strong_text_color()
+            } else {
+                visuals.weak_text_color().gamma_multiply(0.6)
+            };
+            painter.circle_filled(at(angle(ti), r + 13.0), 1.5, color);
+        }
+    }
+
+    // Body: a shadow, then stacked discs shifted up to fake a top light.
+    let (edge, face) = if visuals.dark_mode {
+        (Color32::from_rgb(26, 18, 24), Color32::from_rgb(if hot { 98 } else { 84 }, 66, 82))
+    } else {
+        (Color32::from_rgb(214, 170, 188), Color32::from_rgb(255, if hot { 250 } else { 244 }, 248))
+    };
+    painter.circle_filled(c + vec2(0.0, 2.5), r + 1.0, Color32::from_black_alpha(70));
+    let layers = 8;
+    for i in 0..layers {
+        let k = i as f32 / (layers - 1) as f32;
+        let color = lerp_color(edge, face, k);
+        painter.circle_filled(c - vec2(0.0, k * 2.0), r * (1.0 - k * 0.22), color);
+    }
+    painter.circle_stroke(c, r, Stroke::new(1.0_f32, Color32::from_black_alpha(90)));
+
+    // Pointer
+    let a = angle(t);
+    let pointer = if visuals.dark_mode { Color32::WHITE } else { Color32::from_gray(40) };
+    painter.line_segment([at(a, r * 0.35), at(a, r * 0.85)], Stroke::new(3.0_f32, pointer));
+
+    painter.text(
+        pos2(rect.center().x, rect.bottom() - 9.0),
+        Align2::CENTER_CENTER,
+        choices.get(*index).copied().unwrap_or(""),
+        FontId::proportional(15.0),
+        visuals.strong_text_color(),
+    );
+    *index != before
+}
