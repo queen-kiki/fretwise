@@ -19,7 +19,9 @@ move when you play.
 
 ## Using the trainer
 
-- **Key** and **Scale** knobs: drag up/down, scroll, or click for a list.
+- **Key** knob: drag up/down, scroll, or click for a list.
+- **Scale** menu: click it for the list, sorted into groups (basic, modes,
+  minor, exotic). The groups come from the scale files, not the code.
 - **Order** and **Labels**: Random / Up / Up & down, and note names or scale
   degrees.
 - **Fret range**: drag the lit strip of fret numbers under the neck. Drag an
@@ -30,6 +32,36 @@ move when you play.
 - The colours are soft pinks in light and dark mode, with the trans pride
   blue, pink and white as accents. A small "about" link at the very bottom of
   settings opens the About window (version and build date).
+
+## Adding a scale
+
+Each scale is a JSON file. Built-in ones are in `crates/fretwise-core/scales/`
+and are compiled into the app (and a future plugin), so nothing has to sit
+next to the exe. Add a file there and rebuild, or drop one into
+`%APPDATA%\Fretwise\scales\` and restart the app. A bad file there is
+skipped, with the reason printed to the console.
+
+```json
+{
+  "id": "lydian",
+  "name": "Lydian",
+  "group": "modes",
+  "order": 103,
+  "intervals": [0, 2, 4, 6, 7, 9, 11],
+  "degrees": ["1", "2", "3", "#4", "5", "6", "7"]
+}
+```
+
+- `id`: unique and stable. Saved settings store it, so don't rename it.
+- `name`: shown after the key, e.g. "A Lydian".
+- `group`: any text. The menu has one section per group.
+- `intervals`: semitones above the root. Start at 0, go up, stay below 12.
+- `order` (optional, default 1000): lower comes first. Groups are sorted by
+  their lowest `order`, then by name. Scales within a group are sorted by
+  `order`, then by name. The built-ins use 0–99 for basic, 100s for modes,
+  200s for minor and 300s for exotic.
+- `degrees` (optional): one name per interval, spelled with `b` and `#`. Without
+  it, degrees fall back to 1 b2 2 b3 3 4 b5 5 b6 6 b7 7.
 
 ## UI widgets
 
@@ -59,6 +91,7 @@ fretwise-core   no I/O, no GUI
   pitch         YIN pitch detector, allocation-free
   analyzer      Analyzer::push(sample) -> SharedPitch (atomics)  <- audio thread
   stabilizer    jittery readings -> "holding note X"             <- GUI thread
+  scale         scale registry, built from scales/*.json at compile time
   trainer       challenges, judging, stats, weighted selection   <- GUI thread
 
 fretwise-ui     plain egui views: FretwiseUi::show(ui, PitchReading)
