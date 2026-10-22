@@ -258,7 +258,7 @@ impl ChordKind {
 pub enum ChordPick {
     Family(ChordFamily),
     One(ChordKind),
-    /// A Learn deck's chords, in deck order (not offered in the UI).
+    /// A Learn deck's chords, in deck order.
     Deck(DeckKind),
 }
 
@@ -701,6 +701,26 @@ mod tests {
         for id in ["em-open", "am-open", "c-open", "g-open", "e5-power", "f-barre", "bm-barre"] {
             assert!(ChordKind::by_id(id).is_some(), "{id}");
         }
+    }
+
+    #[test]
+    fn a_deck_pick_saves_and_drills_the_deck_in_order() {
+        let deck = DeckKind::by_id("basic-chords").unwrap();
+        let cfg = ChordTrainerConfig { pick: ChordPick::Deck(deck), order: ChordOrder::InOrder, ..Default::default() };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""pick":{"Deck":"basic-chords"}"#), "{json}");
+        assert_eq!(serde_json::from_str::<ChordTrainerConfig>(&json).unwrap(), cfg);
+
+        let mut t = ChordTrainer::new(Tuning::STANDARD, cfg, 1);
+        let mut seen = Vec::new();
+        for i in 0..deck.chords().len() {
+            t.restart(0.0);
+            for _ in 0..i {
+                t.skip(0.0);
+            }
+            seen.push(t.current().unwrap().chord);
+        }
+        assert_eq!(seen, deck.chords());
     }
 
     #[test]

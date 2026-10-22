@@ -1,7 +1,7 @@
 //! Free practice, chords: the chord drill.
 
 use egui::text::LayoutJob;
-use fretwise_core::{ChordFamily, ChordFeedback, ChordOrder, ChordPick, ChordTrainerConfig};
+use fretwise_core::{ChordFamily, ChordFeedback, ChordOrder, ChordPick, ChordTrainerConfig, DeckKind};
 
 use crate::parts::{
     center_stage, chord_markers, pitch_class_tokens, rack_frame, rack_group, terminal_screen, token, NECK_FRETS,
@@ -106,8 +106,9 @@ impl FretwiseUi {
             let cfg = &mut self.chord_trainer.config;
             // Like the scale picker: grouped by family, each group led by
             // "All ..." to drill the lot, then single chords to get one clean.
+            // Last, the Learn decks that have chords, to drill a deck's set.
             rack_group(ui, "Chords", |ui| {
-                let groups: Vec<(&str, Vec<(ChordPick, &str)>)> = ChordFamily::ALL
+                let mut groups: Vec<(&str, Vec<(ChordPick, &str)>)> = ChordFamily::ALL
                     .iter()
                     .map(|&family| {
                         let mut items = vec![(ChordPick::Family(family), family.all_label())];
@@ -115,6 +116,11 @@ impl FretwiseUi {
                         (family.name(), items)
                     })
                     .collect();
+                let decks: Vec<(ChordPick, &str)> = DeckKind::all()
+                    .filter(|d| !d.chords().is_empty())
+                    .map(|d| (ChordPick::Deck(d), d.name()))
+                    .collect();
+                groups.push(("Decks", decks));
                 let shown = cfg.pick.name();
                 dropdown(ui, "chord_pick", &mut cfg.pick, shown, &groups, 210.0, 15.0);
             });
