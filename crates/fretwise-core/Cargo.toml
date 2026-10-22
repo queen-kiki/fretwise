@@ -1,0 +1,8 @@
+[package]
+name = "fretwise-core"
+description = "Host-agnostic pitch analysis and guitar training logic (no audio I/O, no GUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

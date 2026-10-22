@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fretwise-core",
+    "crates/fretwise-ui",
+    "crates/fretwise-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+fretwise-core = { path = "crates/fretwise-core" }
+fretwise-ui = { path = "crates/fretwise-ui" }
+egui = "0.31"
+eframe = "0.31"
+cpal = "0.15"
+
+# Pitch detection runs per audio block; keep it fast even in debug builds
+# so `cargo run` doesn't drop out.
+[profile.dev.package.fretwise-core]
+opt-level = 3

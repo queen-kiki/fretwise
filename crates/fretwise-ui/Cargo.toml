@@ -1,0 +1,10 @@
+[package]
+name = "fretwise-ui"
+description = "egui views for Fretwise, shared by the standalone app and a future plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fretwise-core.workspace = true
+egui.workspace = true

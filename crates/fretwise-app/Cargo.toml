@@ -1,0 +1,22 @@
+[package]
+name = "fretwise-app"
+description = "Standalone Fretwise: cpal audio input + eframe window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fretwise"
+path = "src/main.rs"
+
+[features]
+# Native ASIO on Windows. Needs LLVM (libclang) and the Steinberg ASIO SDK;
+# set CPAL_ASIO_DIR to the SDK folder or cpal's build script downloads it.
+asio = ["cpal/asio"]
+
+[dependencies]
+fretwise-core.workspace = true
+fretwise-ui.workspace = true
+eframe.workspace = true
+egui.workspace = true
+cpal.workspace = true
