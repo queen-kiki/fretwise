@@ -179,6 +179,7 @@ impl Analyzer {
         let estimate = if level_db >= self.gate_db {
             self.yin.detect(&self.frame)
         } else {
+            self.poly_notes = [0.0; MAX_NOTES];
             None
         };
 

@@ -360,11 +360,15 @@ pub struct ChordProgress {
 }
 
 /// Seconds a rolling strum / arpeggio keeps accumulated notes before silence clears them.
-const STRUM_WINDOW: f64 = 1.6;
+const STRUM_WINDOW: f64 = 1.4;
+/// Seconds a polyphonic FFT pitch class must persist before it counts (mirrors `NoteStabilizer`).
+const POLY_HOLD: f64 = 0.08;
+/// Minimum short-term input level (dBFS) to accept polyphonic chord notes.
+const CHORD_GATE_DB: f32 = -45.0;
 
 /// Chord trainer: asks for a chord from the active curriculum set and accepts
 /// either a full strum (via [`PitchReading::poly`]) or a slow strum / arpeggio
-/// where the chord's pitch classes arrive over ~1.5 seconds.
+/// where the chord's pitch classes arrive over ~1.4 seconds.
 pub struct ChordTrainer {
     pub config: ChordTrainerConfig,
     pub tuning: Tuning,
@@ -372,7 +376,9 @@ pub struct ChordTrainer {
     stats: HashMap<String, PositionStats>,
     feedback: Option<(ChordFeedback, f64)>,
     advance_at: Option<f64>,
-    /// Last time each pitch class (0..12) was heard, either in poly or mono.
+    /// When each pitch class started holding continuously in the poly detector.
+    poly_since: [Option<f64>; 12],
+    /// Last time each pitch class (0..12) was confirmed (held for `POLY_HOLD` or via `NoteStabilizer`).
     class_seen_at: [f64; 12],
     /// Pitch-class mask of the chord that just resolved, so a still-ringing
     /// chord doesn't immediately count toward the next prompt until silence.
@@ -394,6 +400,7 @@ impl ChordTrainer {
             stats: HashMap::new(),
             feedback: None,
             advance_at: None,
+            poly_since: [None; 12],
             class_seen_at: [f64::NEG_INFINITY; 12],
             ringing_mask: 0,
             last_voiced: f64::NEG_INFINITY,
@@ -458,6 +465,7 @@ impl ChordTrainer {
                 }
             }
         }
+        self.poly_since = [None; 12];
         self.class_seen_at = [f64::NEG_INFINITY; 12];
         let chords = self.config.set.chords();
         if chords.is_empty() {
@@ -524,45 +532,63 @@ impl ChordTrainer {
         let Some(voicing) = self.current_chord() else { return };
         let target_mask = voicing.pitch_class_mask(self.tuning);
 
-        // Collect currently sounding notes from both the poly FFT and the mono tracker.
-        let mut frame_notes: Vec<Note> = reading
-            .poly
-            .iter()
-            .copied()
-            .filter(|&f| f > 0.0)
-            .filter_map(|f| nearest_note(f, a4))
-            .filter(|r| r.cents.abs() <= 45.0)
-            .map(|r| r.note)
-            .collect();
-        if let Some(n) = mono {
-            if !frame_notes.contains(&n) {
-                frame_notes.push(n);
+        // Gate on the short-term input level so decaying tail after stopping
+        // or quiet background noise can't feed the chord detector.
+        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
+            reading
+                .poly
+                .iter()
+                .copied()
+                .filter(|&f| f > 0.0)
+                .filter_map(|f| nearest_note(f, a4))
+                .filter(|r| r.cents.abs() <= 35.0)
+                .fold(0u16, |m, r| m | (1 << r.note.pitch_class()))
+        } else {
+            0
+        };
+
+        // Require each poly pitch class to hold steady for `POLY_HOLD` before it counts.
+        let mut frame_mask = 0u16;
+        for pc in 0..12usize {
+            if (raw_poly_mask & (1 << pc)) != 0 {
+                let since = *self.poly_since[pc].get_or_insert(now);
+                if now - since >= POLY_HOLD {
+                    frame_mask |= 1 << pc;
+                }
+            } else {
+                self.poly_since[pc] = None;
             }
         }
+        if let Some(n) = mono {
+            frame_mask |= 1 << n.pitch_class();
+        }
 
-        if frame_notes.is_empty() {
-            if now - self.last_voiced > 0.25 {
+        if raw_poly_mask == 0 && mono.is_none() {
+            if now - self.last_voiced > 0.2 {
                 self.ringing_mask = 0;
+                self.class_seen_at = [f64::NEG_INFINITY; 12];
             }
         } else {
             self.last_voiced = now;
         }
 
-        let frame_mask = frame_notes
-            .iter()
-            .fold(0u16, |m, n| m | (1 << n.pitch_class()));
-
         // Ignore the previous chord while it's still ringing out (unless the
         // new chord has the same pitch classes).
-        if self.ringing_mask != 0 && frame_mask != 0 && (frame_mask & !self.ringing_mask) == 0 && self.ringing_mask != target_mask {
+        if self.ringing_mask != 0
+            && frame_mask != 0
+            && (frame_mask & !self.ringing_mask) == 0
+            && self.ringing_mask != target_mask
+        {
             return;
         }
         if frame_mask & !self.ringing_mask != 0 {
             self.ringing_mask = 0;
         }
 
-        for &n in &frame_notes {
-            self.class_seen_at[n.pitch_class() as usize] = now;
+        for pc in 0..12usize {
+            if (frame_mask & (1 << pc)) != 0 {
+                self.class_seen_at[pc] = now;
+            }
         }
 
         // Active pitch classes within the rolling strum window.
@@ -590,9 +616,9 @@ impl ChordTrainer {
         }
 
         // Require every pitch class of the chord to be present in the window,
-        // and no more than one stray out-of-chord class in the current frame.
+        // and no out-of-chord pitch classes in the current frame.
         let extra_in_frame = (frame_mask & !target_mask).count_ones();
-        if (active_classes & target_mask) == target_mask && extra_in_frame <= 1 {
+        if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
             let started = self.current.map_or(now, |c| c.started);
             let seconds = (now - started).max(0.0);
             let s = self.stats.entry(voicing.id.clone()).or_default();
@@ -650,17 +676,19 @@ mod tests {
         t.restart(0.0);
         assert_eq!(t.current_chord().unwrap().name, "Em");
 
-        // 1) Instant strum via poly: E2 B2 E3 G3 B3 E4.
-        let mut r = PitchReading::default();
+        // 1) Strum via poly (held for at least POLY_HOLD, above CHORD_GATE_DB): E2 B2 G3.
+        let mut r = PitchReading { level_db: -20.0, ..Default::default() };
         for (slot, midi) in r.poly.iter_mut().zip([40u8, 47, 55]) {
             *slot = Note(midi).frequency(440.0);
         }
+        t.update(0.4, &r, None, 440.0);
+        assert!(!t.is_resolved()); // single frame blip doesn't trigger
         t.update(0.5, &r, None, 440.0);
         assert!(t.is_resolved());
         assert_eq!(t.correct, 1);
 
         // Advance to Am, let silence clear the ringing Em, then arpeggiate A-C-E one by one.
-        let silent = PitchReading::default();
+        let silent = PitchReading { level_db: -80.0, ..Default::default() };
         t.update(1.5, &silent, None, 440.0);
         assert!(!t.is_resolved());
         assert_eq!(t.current_chord().unwrap().name, "Am");

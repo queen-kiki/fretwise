@@ -28,10 +28,13 @@ const MIN_FREQ: f32 = 70.0;
 const MAX_FREQ: f32 = 1100.0;
 /// Overtones are looked for up to here.
 const MAX_PEAK_FREQ: f32 = 2600.0;
-/// Peaks quieter than this, relative to the loudest, are ignored (-22 dB).
-const PEAK_FLOOR: f32 = 0.08;
+/// Peaks quieter than this, relative to the loudest, are ignored (-18 dB).
+const PEAK_FLOOR: f32 = 0.12;
+/// How much taller a peak must be than the median spectrum bin around it (~21 dB),
+/// so broadband noise / interface hiss can't produce 8 random peaks.
+const MIN_SNR: f32 = 12.0;
 /// How close (in cents) a peak must be to a multiple to count as an overtone.
-const OVERTONE_CENTS: f32 = 30.0;
+const OVERTONE_CENTS: f32 = 35.0;
 /// Highest overtone number checked.
 const MAX_OVERTONE: f32 = 10.0;
 
@@ -184,7 +187,11 @@ impl PolyDetector {
         if loudest <= 0.0 {
             return;
         }
-        let floor = loudest * PEAK_FLOOR;
+        let mean_mag = self.mag[lo..=hi].iter().sum::<f32>() / (hi - lo + 1) as f32;
+        if loudest < mean_mag * MIN_SNR {
+            return;
+        }
+        let floor = (loudest * PEAK_FLOOR).max(mean_mag * MIN_SNR);
 
         // Local maxima over two bins each side, refined on a log scale.
         self.peaks.clear();
@@ -200,7 +207,9 @@ impl PolyDetector {
             self.peaks.push(Peak { freq: (k as f32 + p) * bin_hz, amp: (b - 0.25 * (a - c) * p).exp() });
         }
 
-        // Low to high: overtones of a note already found are dropped.
+        // Low to high: overtones of a note already found are dropped, and a
+        // candidate fundamental must have at least one audible overtone (guitar
+        // strings are rich in harmonics; mains hum and random noise spikes aren't).
         self.notes.clear();
         for &peak in &self.peaks {
             if peak.freq > MAX_FREQ {
@@ -214,7 +223,17 @@ impl PolyDetector {
                     && (1200.0 * (ratio / h).log2()).abs() < OVERTONE_CENTS
                     && n.amp >= 0.1 * peak.amp
             });
-            if !overtone {
+            if overtone {
+                continue;
+            }
+            let has_harmonic = self.peaks.iter().any(|p| {
+                let ratio = p.freq / peak.freq;
+                let h = ratio.round();
+                (2.0..=4.0).contains(&h)
+                    && (1200.0 * (ratio / h).log2()).abs() < OVERTONE_CENTS
+                    && p.amp >= 0.08 * peak.amp
+            });
+            if has_harmonic {
                 self.notes.push(peak);
             }
         }
@@ -283,6 +302,20 @@ mod tests {
         let mut d = PolyDetector::new(48_000.0, -55.0);
         for _ in 0..24_000 {
             d.push(0.0);
+        }
+        assert_eq!(d.notes(), [0.0; MAX_NOTES]);
+    }
+
+    #[test]
+    fn broadband_noise_above_gate_reports_no_notes() {
+        let mut d = PolyDetector::new(48_000.0, -55.0);
+        let mut x = 0x1234_5678u32;
+        for _ in 0..24_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let sample = (x as f32 / u32::MAX as f32 - 0.5) * 0.2;
+            d.push(sample);
         }
         assert_eq!(d.notes(), [0.0; MAX_NOTES]);
     }
