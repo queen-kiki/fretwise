@@ -11,11 +11,16 @@ Guitar learning app for electric guitar through an audio interface.
 - **Free practice**, from the eighth-note button:
   - **Notes**: asks for a note on a string (or shows a dot), listens for it,
     and asks more often about the positions you're slow on or miss.
-  - **Chords**: a chord family or a single chord, recognizing both full
-    strums (via FFT polyphonic detection) and slow strums / arpeggios.
+  - **Chords**: a chord family, a single chord, or a Learn deck's chords,
+    recognizing both full strums (via FFT polyphonic detection) and slow
+    strums / arpeggios. **Diagram** on Auto shows a chord's shape until
+    you've played it cleanly and quickly a few times, then hides it.
 - **Tuner**: note, cents gauge, and which string to turn which way.
 - **Stats**: per-position heatmap of the note trainer's first-try accuracy
   and average time.
+
+The space bar skips, like the skip button, on the Learn, notes and chords
+screens.
 
 ## Run
 
@@ -25,7 +30,10 @@ cargo run --release
 
 Open settings with the ⚙ button (top right), and pick the interface and the
 input your guitar is plugged into. Watch the IN meter next to it: it should
-move when you play.
+move when you play. The tick on the meter is the **Gate** (in settings,
+-55 dB to start): quieter input is ignored, and the meter turns grey below
+it. If your notes aren't heard, lower the gate; if hum or string noise
+counts as notes, raise it.
 
 ## Using free practice (notes)
 
@@ -49,8 +57,8 @@ move when you play.
   with no single right answer, so they show no numbers. You can turn this off
   in settings.
 - **Chromatic**: every note is in the scale, so only the key's root is marked.
-- Everything else (audio device, tuning, A4, prompt style, scale pattern,
-  chime, theme) is in the ⚙ settings panel. Esc or a click outside closes it.
+- Everything else (audio device, input gate, tuning, A4, prompt style,
+  scale pattern, chime, theme) is in the ⚙ settings panel. Esc or a click outside closes it.
 - The colours are soft pinks in light and dark mode, with the trans pride
   blue, pink and white as accents. A small "about" link at the very bottom of
   settings opens the About window (version and build date).
@@ -191,7 +199,9 @@ fourth crate, `fretwise-plugin`, using [nih-plug](https://github.com/robbert-vdh
 - `Plugin::process`: downmix the buffer to mono, `analyzer.process(&mono)`,
   pass audio through unchanged.
 - `Plugin::editor`: `nih_plug_egui::create_egui_editor`, calling
-  `FretwiseUi::show` inside a `CentralPanel`.
+  `FretwiseUi::show` inside a `CentralPanel`, and passing
+  `FretwiseUi::gate_db()` to `SharedPitch::set_gate_db` each frame, as the
+  app does.
 
 One constraint: `fretwise-ui`'s egui version has to match the one
 `nih_plug_egui` pins, so check that before adding the plugin crate.
