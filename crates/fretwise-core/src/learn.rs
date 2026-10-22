@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::analyzer::PitchReading;
 use crate::chord::{ChordKind, ChordVoicing};
 use crate::deck::DeckKind;
-use crate::scale::Scale;
+use crate::scale::{Scale, ScaleKind};
 use crate::srs::{unix_seconds, Grade, SrsCard};
 use crate::theory::{nearest_note, Note, Position, Tuning};
 
@@ -32,8 +32,6 @@ pub enum GuideMode {
 #[serde(default)]
 pub struct LearnConfig {
     pub deck: DeckKind,
-    /// Root pitch class (0 = C) for scale cards in the deck.
-    pub root: u8,
     /// Fret range for scale cards (e.g. `5..=8` for a single position box).
     pub min_fret: u8,
     pub max_fret: u8,
@@ -45,7 +43,6 @@ impl Default for LearnConfig {
     fn default() -> Self {
         Self {
             deck: DeckKind::default(),
-            root: 9, // A
             min_fret: 5,
             max_fret: 8,
             guide: GuideMode::Auto,
@@ -56,7 +53,7 @@ impl Default for LearnConfig {
 /// One individual Anki card in a deck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LearnCard {
-    Scale(Scale),
+    Scale(ScaleKind),
     Chord(ChordKind),
 }
 
@@ -64,7 +61,7 @@ impl LearnCard {
     /// Stable storage key for this individual card, shared across all decks.
     pub fn key(self) -> String {
         match self {
-            LearnCard::Scale(s) => format!("scale:{}:{}", s.root % 12, s.kind.id()),
+            LearnCard::Scale(k) => format!("scale:{}", k.id()),
             LearnCard::Chord(c) => format!("chord:{}", c.id()),
         }
     }
@@ -72,7 +69,7 @@ impl LearnCard {
     /// Display name of the card.
     pub fn title(self) -> String {
         match self {
-            LearnCard::Scale(s) => s.name(),
+            LearnCard::Scale(k) => k.name().to_string(),
             LearnCard::Chord(c) => c.name().to_string(),
         }
     }
@@ -85,10 +82,10 @@ impl LearnCard {
         }
     }
 
-    /// Compact summary string (pitch classes for scales, string frets for chords).
+    /// Compact summary string (degree formula for scales, string frets for chords).
     pub fn detail(self) -> String {
         match self {
-            LearnCard::Scale(s) => s.notes_string(),
+            LearnCard::Scale(k) => k.formula(),
             LearnCard::Chord(c) => c.voicing().shape_string(),
         }
     }
@@ -233,10 +230,20 @@ impl LearnTrainer {
 
     pub fn current_key(&self) -> Option<String> {
         match &self.current {
-            Some(ActiveCard::Scale { scale, .. }) => Some(LearnCard::Scale(*scale).key()),
+            Some(ActiveCard::Scale { scale, .. }) => Some(LearnCard::Scale(scale.kind).key()),
             Some(ActiveCard::Chord { chord, .. }) => Some(LearnCard::Chord(*chord).key()),
             None => None,
         }
+    }
+
+    /// Root pitch class anchored to the 6th string at `config.min_fret` (e.g. A at fret 5).
+    pub fn box_root(&self) -> u8 {
+        self.tuning
+            .note_at(Position {
+                string: 0,
+                fret: self.config.min_fret,
+            })
+            .pitch_class()
     }
 
     pub fn progress(&self) -> LearnProgress {
@@ -272,8 +279,10 @@ impl LearnTrainer {
         self.feedback = None;
         self.poly_since = [None; 12];
         self.class_seen_at = [f64::NEG_INFINITY; 12];
+        let root = self.box_root();
         self.current = Some(match card {
-            LearnCard::Scale(scale) => {
+            LearnCard::Scale(kind) => {
+                let scale = Scale { root, kind };
                 let (box_positions, sequence) = self.scale_sequence(scale);
                 ActiveCard::Scale {
                     scale,
@@ -296,13 +305,14 @@ impl LearnTrainer {
     /// All deduplicated cards in the active deck.
     pub fn deck_cards(&self) -> Vec<LearnCard> {
         let mut out = Vec::new();
+        let root = self.box_root();
         for &kind in self.config.deck.scales() {
             if kind.is_chromatic() {
                 continue;
             }
-            let scale = Scale { root: self.config.root % 12, kind };
+            let scale = Scale { root, kind };
             if !self.scale_sequence(scale).1.is_empty() {
-                out.push(LearnCard::Scale(scale));
+                out.push(LearnCard::Scale(kind));
             }
         }
         for &chord in self.config.deck.chords() {
@@ -387,8 +397,10 @@ impl LearnTrainer {
             pick -= w;
         }
 
+        let root = self.box_root();
         self.current = Some(match chosen {
-            LearnCard::Scale(scale) => {
+            LearnCard::Scale(kind) => {
+                let scale = Scale { root, kind };
                 let (box_positions, sequence) = self.scale_sequence(scale);
                 ActiveCard::Scale {
                     scale,
@@ -482,7 +494,7 @@ impl LearnTrainer {
                 let per_note = seconds / sequence.len().max(1) as f64;
                 let grade = Grade::for_note(per_note, *misses);
                 let title = scale.name();
-                let key = LearnCard::Scale(*scale).key();
+                let key = LearnCard::Scale(scale.kind).key();
                 self.finish_card(key, title, seconds, grade, now);
             }
         } else {
@@ -663,7 +675,6 @@ mod tests {
     fn walks_a_scale_card_and_schedules_it_with_sm2() {
         let cfg = LearnConfig {
             deck: DeckKind::by_id("basic-scales").unwrap(),
-            root: 9,
             min_fret: 5,
             max_fret: 8,
             ..Default::default()

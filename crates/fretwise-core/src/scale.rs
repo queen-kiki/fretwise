@@ -276,6 +276,18 @@ impl ScaleKind {
     pub fn is_chromatic(self) -> bool {
         self.entry().mask == 0xfff
     }
+
+    /// Space-separated scale degree formula, e.g. `"1 b3 4 5 b7"`.
+    pub fn formula(self) -> String {
+        let entry = self.entry();
+        entry
+            .def
+            .intervals
+            .iter()
+            .map(|&semi| entry.degrees[(semi % 12) as usize].as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 impl Default for ScaleKind {

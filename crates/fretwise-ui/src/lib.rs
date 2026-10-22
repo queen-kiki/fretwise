@@ -13,7 +13,7 @@ use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
     fingering, format_interval, unix_seconds, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordTrainer,
     ChordTrainerConfig, DeckKind, Feedback, Grade, GuideMode, Labels, LearnCard, LearnConfig, LearnFeedback,
-    LearnProgress, LearnTrainer, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, Scale,
+    LearnProgress, LearnTrainer, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle,
     ScaleKind, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
@@ -1334,11 +1334,6 @@ impl FretwiseUi {
             ui.spacing_mut().item_spacing.x = 18.0;
             let count = self.learn_trainer.deck_cards().len();
             let cfg = &mut self.learn_trainer.config;
-            let mut root = cfg.root as usize % 12;
-            let roots: Vec<&str> = (0..12).map(pitch_class_name).collect();
-            if knob(ui, "learn_root", "Key", &mut root, &roots) {
-                cfg.root = root as u8;
-            }
             let mut open_browser = false;
             rack_group(ui, "Deck", |ui| {
                 ui.horizontal(|ui| {
@@ -1441,12 +1436,11 @@ impl FretwiseUi {
                     .map(LearnCard::Chord)
                     .collect()
             } else {
-                let root = self.learn_trainer.config.root % 12;
                 let deck = self.learn_trainer.config.deck;
                 let mut list = Vec::new();
                 for &kind in deck.scales() {
                     if !kind.is_chromatic() {
-                        list.push(LearnCard::Scale(Scale { root, kind }));
+                        list.push(LearnCard::Scale(kind));
                     }
                 }
                 for &chord in deck.chords() {
