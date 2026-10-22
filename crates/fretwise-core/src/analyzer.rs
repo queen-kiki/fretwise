@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::pitch::Yin;
+use crate::poly::{PolyDetector, MAX_NOTES};
 
 #[derive(Clone, Copy, Debug)]
 pub struct AnalyzerConfig {
@@ -44,6 +45,9 @@ pub struct PitchReading {
     pub level_db: f32,
     /// Increments on every analysis; lets readers tell fresh data from stale.
     pub seq: u64,
+    /// Every note heard at once (for chords), in Hz, strongest first; unused
+    /// slots are 0. Updated less often than `frequency`, about every 40 ms.
+    pub poly: [f32; MAX_NOTES],
 }
 
 /// Lock-free mailbox from the audio thread to the GUI. Fields are stored
@@ -54,6 +58,7 @@ pub struct SharedPitch {
     frequency: AtomicU32,
     clarity: AtomicU32,
     level_db: AtomicU32,
+    poly: [AtomicU32; MAX_NOTES],
     seq: AtomicU64,
 }
 
@@ -63,6 +68,9 @@ impl SharedPitch {
         self.frequency.store(f.to_bits(), Ordering::Relaxed);
         self.clarity.store(r.clarity.to_bits(), Ordering::Relaxed);
         self.level_db.store(r.level_db.to_bits(), Ordering::Relaxed);
+        for (slot, f) in self.poly.iter().zip(r.poly) {
+            slot.store(f.to_bits(), Ordering::Relaxed);
+        }
         self.seq.store(r.seq, Ordering::Release);
     }
 
@@ -74,12 +82,16 @@ impl SharedPitch {
             clarity: f32::from_bits(self.clarity.load(Ordering::Relaxed)),
             level_db: f32::from_bits(self.level_db.load(Ordering::Relaxed)),
             seq,
+            poly: std::array::from_fn(|i| f32::from_bits(self.poly[i].load(Ordering::Relaxed))),
         }
     }
 }
 
 pub struct Analyzer {
     yin: Yin,
+    poly: PolyDetector,
+    /// The poly detector's latest notes, sent along with every reading.
+    poly_notes: [f32; MAX_NOTES],
     /// Circular history of (decimated) input; `pos` is the oldest sample.
     history: Vec<f32>,
     pos: usize,
@@ -105,6 +117,8 @@ impl Analyzer {
         let len = yin.required_len();
         Self {
             yin,
+            poly: PolyDetector::new(rate, config.gate_db),
+            poly_notes: [0.0; MAX_NOTES],
             history: vec![0.0; len],
             pos: 0,
             frame: vec![0.0; len],
@@ -135,6 +149,9 @@ impl Analyzer {
         self.acc = 0.0;
         self.acc_count = 0;
 
+        if self.poly.push(s) {
+            self.poly_notes = self.poly.notes();
+        }
         self.history[self.pos] = s;
         self.pos = (self.pos + 1) % self.history.len();
         self.since_last += 1;
@@ -171,6 +188,7 @@ impl Analyzer {
             clarity: estimate.map_or(0.0, |e| e.clarity),
             level_db,
             seq: self.seq,
+            poly: self.poly_notes,
         });
     }
 }
@@ -185,7 +203,7 @@ mod tests {
         let sr = 96_000.0;
         let shared = Arc::new(SharedPitch::default());
         let mut a = Analyzer::new(sr, AnalyzerConfig::default(), shared.clone());
-        let signal = guitar_like(110.0, sr, 9_600);
+        let signal = guitar_like(110.0, sr, 48_000);
         for block in signal.chunks(256) {
             a.process(block);
         }
@@ -193,6 +211,9 @@ mod tests {
         assert!(r.seq > 0);
         let f = r.frequency.expect("voiced");
         assert!((1200.0 * (f / 110.0).log2()).abs() < 5.0, "{f}");
+        // The chord detector hears it too, through the shared mailbox.
+        let poly = r.poly[0];
+        assert!((1200.0 * (poly / 110.0).log2()).abs() < 10.0, "{:?}", r.poly);
     }
 
     #[test]

@@ -11,8 +11,9 @@ use egui::text::LayoutJob;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
-    fingering, Feedback, Labels, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind,
-    Trainer, TrainerConfig, Tuning,
+    fingering, ChordFeedback, ChordOrder, ChordProgress, ChordSetKind, ChordTrainer, ChordTrainerConfig, Feedback,
+    Labels, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer,
+    TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,7 @@ const HEARD: Color32 = Color32::from_rgb(240, 190, 70);
 enum Tab {
     Tuner,
     Trainer,
+    Chords,
     Progress,
 }
 
@@ -72,6 +74,7 @@ pub struct FretwiseUi {
     tuning: Tuning,
     stabilizer: NoteStabilizer,
     trainer: Trainer,
+    chord_trainer: ChordTrainer,
     smoothed_cents: f32,
     chime_enabled: bool,
     chime_pending: bool,
@@ -94,6 +97,7 @@ impl Default for FretwiseUi {
             tuning: Tuning::STANDARD,
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
+            chord_trainer: ChordTrainer::new(Tuning::STANDARD, ChordTrainerConfig::default(), seed ^ 0x9e37_79b9),
             smoothed_cents: 0.0,
             chime_enabled: true,
             chime_pending: false,
@@ -114,6 +118,8 @@ pub struct UiState {
     tuning: [Note; 6],
     trainer: TrainerConfig,
     progress: Progress,
+    chords: ChordTrainerConfig,
+    chord_progress: ChordProgress,
     /// Play a sound on correct answers.
     chime: bool,
     /// Draw the scale's positions on the trainer's fretboard.
@@ -151,6 +157,9 @@ impl FretwiseUi {
         ui.trainer.tuning = ui.tuning;
         ui.trainer.config = cfg;
         ui.trainer.set_progress(state.progress);
+        ui.chord_trainer.tuning = ui.tuning;
+        ui.chord_trainer.config = state.chords;
+        ui.chord_trainer.set_progress(state.chord_progress);
         ui
     }
 
@@ -161,6 +170,8 @@ impl FretwiseUi {
             tuning: self.tuning.strings,
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
+            chords: self.chord_trainer.config,
+            chord_progress: self.chord_trainer.progress(),
             chime: self.chime_enabled,
             show_pattern: self.show_pattern,
             show_fingering: self.show_fingering,
@@ -183,6 +194,13 @@ impl FretwiseUi {
             self.trainer.update(now, held.map(|h| h.note));
             let after = self.trainer.feedback();
             if after != before && matches!(after, Some((Feedback::Correct { .. }, _))) {
+                self.chime_pending |= self.chime_enabled;
+            }
+        } else if self.tab == Tab::Chords {
+            let before = self.chord_trainer.feedback().map(|(_, t)| t);
+            self.chord_trainer.update(now, &reading, held.map(|h| h.note), self.a4);
+            let after = self.chord_trainer.feedback();
+            if after.map(|(_, t)| t) != before && matches!(after, Some((ChordFeedback::Correct { .. }, _))) {
                 self.chime_pending |= self.chime_enabled;
             }
         }
@@ -212,6 +230,7 @@ impl FretwiseUi {
         egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| match self.tab {
             Tab::Tuner => self.tuner_tab(ui, &reading),
             Tab::Trainer => self.trainer_tab(ui, now),
+            Tab::Chords => self.chords_tab(ui, now),
             Tab::Progress => self.progress_tab(ui),
         });
 
@@ -282,7 +301,12 @@ impl FretwiseUi {
             segmented(
                 ui,
                 &mut self.tab,
-                &[(Tab::Trainer, "Trainer"), (Tab::Tuner, "Tuner"), (Tab::Progress, "Progress")],
+                &[
+                    (Tab::Trainer, "Notes"),
+                    (Tab::Chords, "Chords"),
+                    (Tab::Tuner, "Tuner"),
+                    (Tab::Progress, "Progress"),
+                ],
                 16.0,
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -306,6 +330,12 @@ impl FretwiseUi {
                     ui.add_space(24.0);
                     let t = &self.trainer;
                     readout(ui, "wrong", t.wrong, BAD);
+                    readout(ui, "right", t.correct, GOOD);
+                    readout(ui, "best", t.best_streak, ui.visuals().text_color());
+                    readout(ui, "streak", t.streak, ui.visuals().strong_text_color());
+                } else if self.tab == Tab::Chords {
+                    ui.add_space(24.0);
+                    let t = &self.chord_trainer;
                     readout(ui, "right", t.correct, GOOD);
                     readout(ui, "best", t.best_streak, ui.visuals().text_color());
                     readout(ui, "streak", t.streak, ui.visuals().strong_text_color());
@@ -341,6 +371,8 @@ impl FretwiseUi {
             if self.tuning != tuning_before {
                 self.trainer.tuning = self.tuning;
                 self.trainer.restart(now);
+                self.chord_trainer.tuning = self.tuning;
+                self.chord_trainer.restart(now);
             }
 
             section(ui, "Trainer");
@@ -703,6 +735,214 @@ impl FretwiseUi {
                     .corner_radius(8);
                 if ui.add(skip).on_hover_text("Show the answer and move on").clicked() {
                     self.trainer.skip(now);
+                }
+            });
+        });
+    }
+
+    fn chords_tab(&mut self, ui: &mut egui::Ui, now: f64) {
+        let before = self.chord_trainer.config;
+        egui::TopBottomPanel::bottom("chords_rack")
+            .frame(
+                egui::Frame::new()
+                    .fill(rack_fill(ui))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .corner_radius(8),
+            )
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.chords_rack(ui, now));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| self.chords_stage(ui, now));
+        let display_only = ChordTrainerConfig { show_diagram: before.show_diagram, ..self.chord_trainer.config };
+        if display_only != before {
+            self.chord_trainer.restart(now);
+        }
+    }
+
+    fn chords_stage(&mut self, ui: &mut egui::Ui, now: f64) {
+        let ch = self.chord_trainer.current().copied();
+        let voicing = self.chord_trainer.current_chord();
+        let resolved = self.chord_trainer.is_resolved();
+        let show_diagram = self.chord_trainer.config.show_diagram || resolved;
+
+        let mut markers = Vec::new();
+        let mut active_strings = [true; 6];
+        if let (Some(ch), Some(v)) = (ch, voicing) {
+            for (string, slot) in active_strings.iter_mut().enumerate() {
+                *slot = v.frets[string].is_some();
+                if let Some(fret) = v.frets[string] {
+                    let pos = Position { string, fret };
+                    let heard = (ch.heard_strings & (1 << string)) != 0;
+                    if show_diagram {
+                        let color = if resolved || heard { GOOD } else { TARGET };
+                        let finger = v.fingers[string];
+                        let label = if finger > 0 && self.show_fingering {
+                            Some(finger.to_string())
+                        } else if fret == 0 {
+                            Some("O".into())
+                        } else {
+                            None
+                        };
+                        markers.push(Marker {
+                            pos,
+                            color,
+                            size: 0.78,
+                            ring: fret == 0 && !heard && !resolved,
+                            label,
+                            text: if fret == 0 && !heard && !resolved { color } else { Color32::BLACK },
+                        });
+                    } else if heard {
+                        markers.push(Marker {
+                            pos,
+                            color: GOOD,
+                            size: 0.65,
+                            ring: false,
+                            label: None,
+                            text: Color32::BLACK,
+                        });
+                    }
+                }
+            }
+        }
+
+        let terminal_id = ui.id().with("chord_terminal_height");
+        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
+        let gap = 8.0;
+        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
+        let spare = ui.available_height() - height - gap - terminal_h;
+        ui.add_space((spare / 2.0).max(0.0));
+        let mut min_fret = 0u8;
+        let mut max_fret = 15u8;
+        let controls = NeckControls {
+            min_fret: &mut min_fret,
+            max_fret: &mut max_fret,
+            strings: &mut active_strings,
+        };
+        fretboard(ui, 15, height, &markers, Some(controls));
+        ui.add_space(gap);
+        let h = self.chords_terminal(ui, now);
+        ui.data_mut(|d| d.insert_temp(terminal_id, h));
+    }
+
+    fn chords_terminal(&self, ui: &mut egui::Ui, now: f64) -> f32 {
+        let syn = &theme::SYNTAX;
+        let big = theme::pixel_font(ui, 24.0);
+        let small = theme::pixel_font(ui, 16.0);
+
+        let mut cmd = LayoutJob::default();
+        let c = &mut cmd;
+        token(c, "> ", &big, syn.comment);
+        match self.chord_trainer.current_chord() {
+            Some(v) => {
+                token(c, "strum ", &big, syn.keyword);
+                token(c, &v.name, &big, syn.note);
+                if let Some(barre) = v.barre.filter(|_| self.show_fingering) {
+                    token(c, "  barre fret ", &big, syn.text);
+                    token(c, &barre.to_string(), &big, TARGET);
+                }
+            }
+            None => {
+                token(c, "no chords in set", &big, syn.text);
+            }
+        }
+
+        let mut out = LayoutJob::default();
+        let o = &mut out;
+        match self.chord_trainer.feedback().filter(|(_, t)| now - t < 2.0) {
+            Some((ChordFeedback::Correct { name, seconds }, _)) => {
+                token(o, "ok ", &small, GOOD);
+                token(o, name, &small, syn.note);
+                token(o, " in ", &small, syn.text);
+                token(o, &format!("{seconds:.1}s"), &small, syn.number);
+            }
+            Some((ChordFeedback::Skipped { name }, _)) => {
+                token(o, "skip ", &small, syn.comment);
+                token(o, "it was ", &small, syn.text);
+                token(o, name, &small, syn.note);
+            }
+            None => match (self.chord_trainer.current(), self.chord_trainer.current_chord()) {
+                (Some(ch), Some(v)) if ch.heard_classes != 0 => {
+                    token(o, "hearing ", &small, syn.comment);
+                    for pc in 0..12u8 {
+                        if (ch.heard_classes & (1 << pc)) != 0 {
+                            token(o, pitch_class_name(pc), &small, GOOD);
+                            token(o, " ", &small, syn.text);
+                        }
+                    }
+                    let missing = v.pitch_class_mask(self.tuning) & !ch.heard_classes;
+                    if missing != 0 {
+                        token(o, "· need ", &small, syn.comment);
+                        for pc in 0..12u8 {
+                            if (missing & (1 << pc)) != 0 {
+                                token(o, pitch_class_name(pc), &small, syn.note);
+                                token(o, " ", &small, syn.text);
+                            }
+                        }
+                    }
+                }
+                _ => token(o, "strum or arpeggiate the chord...", &small, syn.comment),
+            },
+        }
+
+        egui::Frame::new()
+            .fill(syn.screen)
+            .stroke(egui::Stroke::new(1.0_f32, syn.border))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(18, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let line = ui.label(cmd).rect;
+                if (now * 1.6).fract() < 0.55 {
+                    let cursor = egui::Rect::from_min_size(
+                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
+                        egui::vec2(big.size * 0.55, line.height() - 4.0),
+                    );
+                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
+                }
+                ui.label(out);
+            })
+            .response
+            .rect
+            .height()
+    }
+
+    fn chords_rack(&mut self, ui: &mut egui::Ui, now: f64) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 18.0;
+            let cfg = &mut self.chord_trainer.config;
+            rack_group(ui, "Curriculum", |ui| {
+                let groups: Vec<(&str, Vec<(ChordSetKind, &str)>)> = ChordSetKind::groups()
+                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                    .collect();
+                let shown = cfg.set.name();
+                dropdown(ui, "chord_set", &mut cfg.set, shown, &groups, 210.0, 15.0);
+            });
+            rack_group(ui, "Order", |ui| {
+                segmented(
+                    ui,
+                    &mut cfg.order,
+                    &[(ChordOrder::Random, "Random"), (ChordOrder::InOrder, "In order")],
+                    15.0,
+                );
+            });
+            rack_group(ui, "Diagram", |ui| {
+                segmented(
+                    ui,
+                    &mut cfg.show_diagram,
+                    &[(true, "Show"), (false, "Hide")],
+                    15.0,
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let skip = egui::Button::new(RichText::new("Skip").size(16.0))
+                    .min_size(egui::vec2(76.0, 40.0))
+                    .fill(ui.visuals().extreme_bg_color)
+                    .corner_radius(8);
+                if ui.add(skip).on_hover_text("Show the answer and move on").clicked() {
+                    self.chord_trainer.skip(now);
                 }
             });
         });

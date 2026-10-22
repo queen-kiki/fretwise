@@ -77,7 +77,7 @@ mod tests {
     use super::*;
 
     fn reading(freq: Option<f32>) -> PitchReading {
-        PitchReading { frequency: freq, clarity: 0.95, level_db: -20.0, seq: 1 }
+        PitchReading { frequency: freq, clarity: 0.95, level_db: -20.0, seq: 1, ..Default::default() }
     }
 
     #[test]

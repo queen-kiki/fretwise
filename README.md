@@ -4,6 +4,9 @@ Guitar learning app for electric guitar through an audio interface.
 
 - **Fretboard trainer**: asks for a note on a string (or shows a dot), listens
   for it, and asks more often about the positions you're slow on or miss.
+- **Chord trainer**: data-driven chord curricula (beginner open chords through
+  barre chords), recognizing both full strums (via FFT polyphonic detection)
+  and slow strums / arpeggios.
 - **Tuner**: note, cents gauge, and which string to turn which way.
 - **Progress**: per-position heatmap of first-try accuracy and average time.
 
@@ -74,6 +77,33 @@ skipped, with the reason printed to the console.
   200s for minor and 300s for exotic.
 - `degrees` (optional): one name per interval, spelled with `b` and `#`. Without
   it, degrees fall back to 1 b2 2 b3 3 4 b5 5 b6 6 b7 7.
+
+## Adding a chord curriculum
+
+Chord sets live in `crates/fretwise-core/chords/` (compiled in) and
+`%APPDATA%\Fretwise\chords\` (loaded at startup):
+
+```json
+{
+  "id": "beginner-minor",
+  "name": "Em & Am",
+  "group": "beginner",
+  "order": 1,
+  "chords": [
+    {
+      "id": "em-open",
+      "name": "Em",
+      "frets": [0, 2, 2, 0, 0, 0],
+      "fingers": [0, 2, 3, 0, 0, 0]
+    }
+  ]
+}
+```
+
+- `frets`: 6 strings from low E (string 6) to high E (string 1). `null` is a
+  muted string, `0` is open, `1..=15` is a fret.
+- `fingers` (optional): `0` for muted/open, `1` (index) to `4` (pinky).
+- `barre` (optional): fret barred by the index finger.
 
 ## UI widgets
 

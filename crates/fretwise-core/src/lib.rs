@@ -8,8 +8,11 @@
 
 pub mod analyzer;
 pub mod chime;
+pub mod chord;
+pub mod fft;
 pub mod fingering;
 pub mod pitch;
+pub mod poly;
 pub mod scale;
 pub mod stabilizer;
 pub mod theory;
@@ -17,6 +20,10 @@ pub mod trainer;
 
 pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use chime::Chime;
+pub use chord::{
+    ChordChallenge, ChordFeedback, ChordOrder, ChordProgress, ChordSetDef, ChordSetKind, ChordTrainer,
+    ChordTrainerConfig, ChordVoicing,
+};
 pub use fingering::fingering;
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};

@@ -1,17 +1,18 @@
-//! Embeds every `scales/*.json` into the binary, so the app (and a plugin
-//! later) needs no files at runtime. Writes `$OUT_DIR/builtin_scales.rs`, a
-//! list of `(file name, contents)` pairs for `scale.rs` to parse.
+//! Embeds every `scales/*.json` and `chords/*.json` into the binary, so the app
+//! (and a plugin later) needs no files at runtime. Writes
+//! `$OUT_DIR/builtin_scales.rs` and `$OUT_DIR/builtin_chords.rs`, lists of
+//! `(file name, contents)` pairs for `scale.rs` and `chord.rs` to parse.
 
 use std::path::Path;
 use std::{env, fs};
 
-fn main() {
-    let dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("scales");
+fn embed_dir(folder: &str, out_file: &str) {
+    let dir = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join(folder);
     println!("cargo:rerun-if-changed={}", dir.display());
 
     let mut files: Vec<_> = fs::read_dir(&dir)
-        .expect("scales folder")
-        .map(|e| e.expect("scales folder entry").path())
+        .unwrap_or_else(|e| panic!("{folder} folder: {e}"))
+        .map(|e| e.expect("folder entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .collect();
     files.sort();
@@ -23,5 +24,10 @@ fn main() {
         out += &format!("    ({name:?}, include_str!({:?})),\n", path.display().to_string());
     }
     out += "]\n";
-    fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join("builtin_scales.rs"), out).unwrap();
+    fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join(out_file), out).unwrap();
+}
+
+fn main() {
+    embed_dir("scales", "builtin_scales.rs");
+    embed_dir("chords", "builtin_chords.rs");
 }
