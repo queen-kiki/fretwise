@@ -67,7 +67,7 @@ skipped, with the reason printed to the console.
 - `intervals`: semitones above the root. Start at 0, go up, stay below 12.
 - `order` (optional, default 1000): lower comes first. Groups are sorted by
   their lowest `order`, then by name. Scales within a group are sorted by
-  `order`, then by name. The built-ins use 0–99 for basic, 100s for modes,
+  `order`, then by name. The built-ins use 0â€“99 for basic, 100s for modes,
   200s for minor and 300s for exotic.
 - `degrees` (optional): one name per interval, spelled with `b` and `#`. Without
   it, degrees fall back to 1 b2 2 b3 3 4 b5 5 b6 6 b7 7.
@@ -79,6 +79,12 @@ with plain egui in `crates/fretwise-ui/src/widgets.rs`; no image assets are
 bundled. Existing egui knob crates were considered but target newer egui
 than the 0.31 this workspace pins (to match `nih_plug_egui`): `egui_knob`
 0.6 needs egui 0.36, `armas-audio` 0.2 needs 0.33.
+
+The prompt terminal under the neck uses **Monocraft** v4.2.1, a
+Minecraft-style monospace font by Idrees Hassan
+(https://github.com/IdreesInc/Monocraft), licensed under the SIL Open Font
+License 1.1. Only the regular `Monocraft.ttf` is bundled, unmodified, in
+`crates/fretwise-ui/assets/fonts/` next to its licence (`Monocraft-OFL.txt`).
 
 ### ASIO (optional)
 
