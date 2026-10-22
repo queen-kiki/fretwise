@@ -7,6 +7,38 @@ pub const TRANS_BLUE: Color32 = Color32::from_rgb(91, 206, 250);
 pub const TRANS_PINK: Color32 = Color32::from_rgb(245, 169, 184);
 pub const TRANS_WHITE: Color32 = Color32::WHITE;
 
+/// A right answer, a note already played, and in tune.
+pub const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
+/// A wrong note, an error, and the meter's top segments.
+pub const BAD: Color32 = Color32::from_rgb(230, 90, 80);
+/// Amber: the note being heard, a "Hard" or due card, a tuner needle off
+/// pitch, and the meter nearing clipping.
+pub const HEARD: Color32 = Color32::from_rgb(240, 190, 70);
+/// The note to play next.
+pub const TARGET: Color32 = TRANS_BLUE;
+/// A deeper pink that reads on the light theme's pale background.
+pub const DEEP_PINK: Color32 = Color32::from_rgb(200, 70, 120);
+/// The stats heat map's colour for positions that need work.
+pub const NEEDS_WORK: Color32 = Color32::from_rgb(232, 96, 146);
+
+/// Fills for the scale pattern's dots: the root, then every other note.
+pub fn pattern_fills(visuals: &Visuals) -> (Color32, Color32) {
+    if visuals.dark_mode {
+        (TRANS_PINK, Color32::from_rgb(118, 86, 110))
+    } else {
+        (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
+    }
+}
+
+/// [`TRANS_PINK`] on the dark theme, [`DEEP_PINK`] on the light one.
+pub fn pink_text(visuals: &Visuals) -> Color32 {
+    if visuals.dark_mode {
+        TRANS_PINK
+    } else {
+        DEEP_PINK
+    }
+}
+
 /// Install the pink visuals for both themes; egui picks one per the
 /// user's preference. Cheap enough to call every frame, but only does
 /// work once per context.
@@ -108,7 +140,7 @@ fn light() -> Visuals {
     v.faint_bg_color = rose(252, 236, 242);
     v.code_bg_color = rose(252, 232, 240);
     v.window_stroke = Stroke::new(1.0_f32, rose(236, 196, 212));
-    v.hyperlink_color = rose(200, 70, 120);
+    v.hyperlink_color = DEEP_PINK;
     v.selection.bg_fill = TRANS_PINK;
     v.selection.stroke = Stroke::new(1.0_f32, rose(74, 20, 48));
 
@@ -125,7 +157,7 @@ fn light() -> Visuals {
     w.hovered.bg_stroke = Stroke::new(1.0_f32, rose(220, 120, 160));
     w.active.bg_fill = TRANS_PINK;
     w.active.weak_bg_fill = TRANS_PINK;
-    w.active.bg_stroke = Stroke::new(1.0_f32, rose(200, 70, 120));
+    w.active.bg_stroke = Stroke::new(1.0_f32, DEEP_PINK);
     w.open.bg_fill = rose(246, 222, 232);
     w.open.weak_bg_fill = rose(246, 222, 232);
     v

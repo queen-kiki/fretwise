@@ -155,7 +155,7 @@ impl fretwise_ui::Host for AudioSetup {
 
         match (&self.error, &self.engine.info) {
             (Some(e), _) => {
-                ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+                ui.colored_label(fretwise_ui::BAD, e);
             }
             (None, Some(i)) => {
                 ui.weak(format!("{} Hz · {} ch · {:?}", i.sample_rate, i.channels, i.format));

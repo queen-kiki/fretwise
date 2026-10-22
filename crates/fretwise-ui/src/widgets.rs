@@ -11,6 +11,8 @@ use egui::{
 use fretwise_core::theory::string_number;
 use fretwise_core::Position;
 
+use crate::theme::{BAD, GOOD, HEARD};
+
 pub struct Marker {
     pub pos: Position,
     pub color: Color32,
@@ -525,7 +527,7 @@ pub fn tuner_gauge(ui: &mut Ui, cents: Option<f32>) {
     painter.rect_filled(
         Rect::from_min_max(pos2(x_of(-5.0), rect.top()), pos2(x_of(5.0), rect.bottom())),
         3.0,
-        Color32::from_rgb(80, 200, 120).gamma_multiply(0.25),
+        GOOD.gamma_multiply(0.25),
     );
     for c in (-50..=50).step_by(10) {
         let x = x_of(c as f32);
@@ -536,11 +538,7 @@ pub fn tuner_gauge(ui: &mut Ui, cents: Option<f32>) {
         );
     }
     if let Some(c) = cents {
-        let color = if c.abs() < 5.0 {
-            Color32::from_rgb(80, 200, 120)
-        } else {
-            Color32::from_rgb(240, 190, 70)
-        };
+        let color = if c.abs() < 5.0 { GOOD } else { HEARD };
         let x = x_of(c);
         painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(4.0_f32, color));
     }
@@ -560,9 +558,9 @@ pub fn level_meter(ui: &mut Ui, level_db: f32) -> Response {
         // Healthy signal runs through the flag colours; yellow and red still
         // warn near clipping.
         let color = if db > -3.0 {
-            Color32::from_rgb(230, 90, 80)
+            BAD
         } else if db > -12.0 {
-            Color32::from_rgb(240, 190, 70)
+            HEARD
         } else {
             crate::theme::pride_gradient((db + 60.0) / 48.0)
         };

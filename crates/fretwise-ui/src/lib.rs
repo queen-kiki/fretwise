@@ -20,16 +20,12 @@ use fretwise_core::{
 use fretwise_core::ChordVoicing;
 use serde::{Deserialize, Serialize};
 
-use theme::{paint_flag, rack_fill, TRANS_BLUE, TRANS_PINK};
+pub use theme::BAD;
+use theme::{paint_flag, pattern_fills, rack_fill, GOOD, HEARD, NEEDS_WORK, TARGET, TRANS_BLUE, TRANS_PINK};
 use widgets::{
     dropdown, flame, fretboard, gear_button, icon_button, knob, level_meter, neck_point, plain_button, segmented,
     session_bar, skip_button, sparkles, toggle, tuner_gauge, Icon, Marker, NeckControls,
 };
-
-const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
-const BAD: Color32 = Color32::from_rgb(230, 90, 80);
-const TARGET: Color32 = TRANS_BLUE;
-const HEARD: Color32 = Color32::from_rgb(240, 190, 70);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Tab {
@@ -345,7 +341,7 @@ impl FretwiseUi {
                 ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
                 ui.label(format!("built {}", env!("FRETWISE_BUILD_DATE")));
                 ui.add_space(12.0);
-                let pink = if ui.visuals().dark_mode { TRANS_PINK } else { Color32::from_rgb(200, 70, 120) };
+                let pink = theme::pink_text(ui.visuals());
                 ui.label(RichText::new("proudly slopped by kiki").italics().size(15.0).color(pink));
             });
         });
@@ -760,11 +756,7 @@ impl FretwiseUi {
             }
             // Small and unlabelled, so the shape reads at a glance: a bright
             // tonic, a slightly bigger 5th, the rest smallest.
-            let (root_fill, other_fill) = if visuals.dark_mode {
-                (TRANS_PINK, Color32::from_rgb(118, 86, 110))
-            } else {
-                (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
-            };
+            let (root_fill, other_fill) = pattern_fills(visuals);
             for pos in positions {
                 let (color, size) = match interval(pos) {
                     0 => (root_fill, 0.55),
@@ -1178,11 +1170,7 @@ impl FretwiseUi {
                 ..
             }) => {
                 let interval = |pos: Position| (self.tuning.note_at(pos).pitch_class() + 12 - scale.root % 12) % 12;
-                let (root_fill, other_fill) = if visuals.dark_mode {
-                    (TRANS_PINK, Color32::from_rgb(118, 86, 110))
-                } else {
-                    (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
-                };
+                let (root_fill, other_fill) = pattern_fills(&visuals);
                 for (idx, &pos) in sequence.iter().enumerate() {
                     if idx < step || resolved {
                         markers.push(Marker {
@@ -1614,7 +1602,7 @@ impl FretwiseUi {
                 let pos = Position { string, fret };
                 if let Some(s) = self.trainer.stats(pos) {
                     let acc = s.accuracy() as f32;
-                    let color = theme::lerp(Color32::from_rgb(232, 96, 146), TRANS_BLUE, acc);
+                    let color = theme::lerp(NEEDS_WORK, TRANS_BLUE, acc);
                     markers.push(Marker {
                         pos,
                         color,
