@@ -107,7 +107,8 @@ pub fn fretboard(
     for f in 1..=frets {
         let x = fret_center(f);
         let mid = (top + bottom) / 2.0;
-        let inlay = visuals.faint_bg_color.gamma_multiply(3.0);
+        // Same colour as the nut, so the inlays read as part of the neck.
+        let inlay = text;
         match f % 12 {
             3 | 5 | 7 | 9 => {
                 painter.circle_filled(pos2(x, mid), 6.0, inlay);
