@@ -13,6 +13,10 @@ use fretwise_core::{Position, Tuning};
 pub struct Marker {
     pub pos: Position,
     pub color: Color32,
+    /// Radius relative to a full-size dot.
+    pub size: f32,
+    /// Draw an outline around the spot instead of a filled dot.
+    pub ring: bool,
     pub label: Option<String>,
     pub text: Color32,
 }
@@ -195,9 +199,13 @@ pub fn fretboard(
     // Markers
     for m in markers.iter().filter(|m| m.pos.fret <= frets) {
         let c = pos2(fret_center(m.pos.fret), string_y(m.pos.string));
-        painter.circle_filled(c, radius, m.color);
+        if m.ring {
+            painter.circle_stroke(c, radius * m.size, Stroke::new(3.0_f32, m.color));
+        } else {
+            painter.circle_filled(c, radius * m.size, m.color);
+        }
         if let Some(label) = &m.label {
-            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * 0.8), m.text);
+            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * m.size * 0.8), m.text);
         }
     }
     changed

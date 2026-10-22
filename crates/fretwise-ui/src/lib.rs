@@ -508,25 +508,32 @@ impl FretwiseUi {
                 Order::Random => self.trainer.candidates(),
                 Order::Ascending | Order::UpDown => self.trainer.sequence(),
             };
+            // Small and unlabelled, so the shape reads at a glance: a bright
+            // tonic, a slightly bigger 5th, the rest smallest.
+            let (root_fill, other_fill) = if visuals.dark_mode {
+                (TRANS_PINK, Color32::from_rgb(118, 86, 110))
+            } else {
+                (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
+            };
+            let tonal = !scale.kind.is_chromatic();
             for pos in positions {
-                let note = self.tuning.note_at(pos);
-                let is_root = note.pitch_class() == scale.root % 12 && !scale.kind.is_chromatic();
-                // Roots stand out from the rest, in either theme.
-                let (fill, text) = match (visuals.dark_mode, is_root) {
-                    (true, false) => (Color32::from_rgb(70, 50, 66), visuals.text_color()),
-                    (true, true) => (TRANS_PINK, Color32::BLACK),
-                    (false, false) => (Color32::from_rgb(240, 218, 228), visuals.text_color()),
-                    (false, true) => (Color32::from_rgb(214, 92, 140), Color32::WHITE),
+                let interval = (self.tuning.note_at(pos).pitch_class() + 12 - scale.root % 12) % 12;
+                let (color, size) = match interval {
+                    0 if tonal => (root_fill, 0.55),
+                    7 if tonal => (other_fill, 0.42),
+                    _ => (other_fill, 0.32),
                 };
-                markers.push(Marker { pos, color: fill, label: Some(self.label(note)), text });
+                markers.push(Marker { pos, color, size, ring: false, label: None, text: Color32::BLACK });
             }
         }
         if let Some(h) = held {
             for pos in self.tuning.positions_of(h.note, 15) {
                 markers.push(Marker {
                     pos,
-                    color: HEARD.gamma_multiply(0.5),
-                    label: Some(self.label(h.note)),
+                    color: HEARD,
+                    size: 0.42,
+                    ring: false,
+                    label: None,
                     text: Color32::BLACK,
                 });
             }
@@ -535,9 +542,16 @@ impl FretwiseUi {
             let resolved = self.trainer.is_resolved();
             if self.show_pattern || style == PromptStyle::FretboardDot || resolved {
                 let color = if resolved { GOOD } else { TARGET };
-                // The pattern already names every spot, so naming the target gives nothing away.
-                let label = (self.show_pattern || resolved).then(|| self.label(ch.note));
-                markers.push(Marker { pos: ch.position, color, label, text: Color32::BLACK });
+                // A ring around whatever dot sits there, a little bigger than it.
+                let under = markers.iter().filter(|m| m.pos == ch.position).map(|m| m.size).fold(0.32, f32::max);
+                markers.push(Marker {
+                    pos: ch.position,
+                    color,
+                    size: under + 0.28,
+                    ring: true,
+                    label: None,
+                    text: Color32::BLACK,
+                });
             }
         }
         let height = (ui.available_height() - 12.0).clamp(220.0, 360.0);
@@ -608,6 +622,8 @@ impl FretwiseUi {
                     markers.push(Marker {
                         pos,
                         color,
+                        size: 1.0,
+                        ring: false,
                         label: Some(format!("{:.1}", s.avg_time())),
                         text: Color32::BLACK,
                     });
