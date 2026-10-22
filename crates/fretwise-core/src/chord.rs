@@ -391,10 +391,156 @@ const STRUM_WINDOW: f64 = 1.4;
 const POLY_HOLD: f64 = 0.08;
 /// Minimum short-term input level (dBFS) to accept polyphonic chord notes.
 const CHORD_GATE_DB: f32 = -45.0;
+/// How far (in cents) a polyphonic note may sit from the nearest semitone.
+const POLY_CENTS: f32 = 35.0;
+/// Seconds of silence after which a ringing chord and the notes heard so far are forgotten.
+const SILENCE: f64 = 0.2;
+/// Seconds between a correct chord in the drill and the next prompt.
+const ADVANCE_DELAY: f64 = 0.75;
 
-/// Chord trainer: asks for a chord from the active deck and accepts either a
-/// full strum (via [`PitchReading::poly`]) or a slow strum / arpeggio where the
-/// chord's pitch classes arrive over ~1.4 seconds.
+/// What [`ChordListener::listen`] heard of the target chord.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChordHeard {
+    /// The chord's pitch classes heard within the strum window (12-bit mask).
+    pub classes: u16,
+    /// Strings whose note has been heard (bit `s` for string index `s`).
+    pub strings: u8,
+    /// Every pitch class of the chord heard, and nothing outside it this frame.
+    pub complete: bool,
+}
+
+/// Listens for a chord over successive readings: a full strum (via
+/// [`PitchReading::poly`]) or a slow strum / arpeggio whose pitch classes
+/// arrive within [`STRUM_WINDOW`] seconds. Shared by the chord drill and
+/// Learn's chord cards.
+#[derive(Clone, Debug)]
+pub(crate) struct ChordListener {
+    poly_since: [Option<f64>; 12],
+    class_seen_at: [f64; 12],
+    /// The previous chord, still ringing: its notes alone don't count
+    /// towards the next one until something new is played or it goes quiet.
+    ringing_mask: u16,
+    last_voiced: f64,
+}
+
+impl Default for ChordListener {
+    fn default() -> Self {
+        Self {
+            poly_since: [None; 12],
+            class_seen_at: [f64::NEG_INFINITY; 12],
+            ringing_mask: 0,
+            last_voiced: f64::NEG_INFINITY,
+        }
+    }
+}
+
+impl ChordListener {
+    /// Forget the notes heard so far, for a new chord.
+    pub fn clear(&mut self) {
+        self.poly_since = [None; 12];
+        self.class_seen_at = [f64::NEG_INFINITY; 12];
+    }
+
+    /// `chord` was just played and may ring on into the next prompt.
+    pub fn set_ringing(&mut self, chord: &ChordVoicing, tuning: Tuning) {
+        self.ringing_mask = chord.pitch_class_mask(tuning);
+    }
+
+    /// Feed one reading and the stabilized mono note. `None` when the frame
+    /// is only the previous chord ringing on, and should be ignored.
+    pub fn listen(
+        &mut self,
+        now: f64,
+        reading: &PitchReading,
+        mono: Option<Note>,
+        a4: f32,
+        voicing: &ChordVoicing,
+        tuning: Tuning,
+    ) -> Option<ChordHeard> {
+        let target_mask = voicing.pitch_class_mask(tuning);
+
+        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
+            reading
+                .poly
+                .iter()
+                .copied()
+                .filter(|&f| f > 0.0)
+                .filter_map(|f| nearest_note(f, a4))
+                .filter(|r| r.cents.abs() <= POLY_CENTS)
+                .fold(0u16, |m, r| m | (1 << r.note.pitch_class()))
+        } else {
+            0
+        };
+
+        let mut frame_mask = 0u16;
+        for pc in 0..12usize {
+            if (raw_poly_mask & (1 << pc)) != 0 {
+                let since = *self.poly_since[pc].get_or_insert(now);
+                if now - since >= POLY_HOLD {
+                    frame_mask |= 1 << pc;
+                }
+            } else {
+                self.poly_since[pc] = None;
+            }
+        }
+        if let Some(n) = mono {
+            frame_mask |= 1 << n.pitch_class();
+        }
+
+        if raw_poly_mask == 0 && mono.is_none() {
+            if now - self.last_voiced > SILENCE {
+                self.ringing_mask = 0;
+                self.class_seen_at = [f64::NEG_INFINITY; 12];
+            }
+        } else {
+            self.last_voiced = now;
+        }
+
+        if self.ringing_mask != 0
+            && frame_mask != 0
+            && (frame_mask & !self.ringing_mask) == 0
+            && self.ringing_mask != target_mask
+        {
+            return None;
+        }
+        if frame_mask & !self.ringing_mask != 0 {
+            self.ringing_mask = 0;
+        }
+
+        for pc in 0..12usize {
+            if (frame_mask & (1 << pc)) != 0 {
+                self.class_seen_at[pc] = now;
+            }
+        }
+
+        let mut active_classes = 0u16;
+        for (pc, &t) in self.class_seen_at.iter().enumerate() {
+            if now - t <= STRUM_WINDOW {
+                active_classes |= 1 << pc;
+            }
+        }
+
+        let mut heard_strings = 0u8;
+        for (string, fret) in voicing.frets.iter().enumerate() {
+            if let Some(fret) = *fret {
+                let pc = tuning.note_at(Position { string, fret }).pitch_class();
+                if active_classes & (1 << pc) != 0 {
+                    heard_strings |= 1 << string;
+                }
+            }
+        }
+
+        let extra_in_frame = (frame_mask & !target_mask).count_ones();
+        Some(ChordHeard {
+            classes: active_classes & target_mask,
+            strings: heard_strings,
+            complete: (active_classes & target_mask) == target_mask && extra_in_frame == 0,
+        })
+    }
+}
+
+/// Chord trainer: asks for a chord from the active pick and accepts either a
+/// full strum or a slow strum / arpeggio (see [`ChordListener`]).
 pub struct ChordTrainer {
     pub config: ChordTrainerConfig,
     pub tuning: Tuning,
@@ -402,10 +548,7 @@ pub struct ChordTrainer {
     stats: HashMap<String, PositionStats>,
     feedback: Option<(ChordFeedback, f64)>,
     advance_at: Option<f64>,
-    poly_since: [Option<f64>; 12],
-    class_seen_at: [f64; 12],
-    ringing_mask: u16,
-    last_voiced: f64,
+    listener: ChordListener,
     seq_step: usize,
     rng: Rng,
     pub streak: u32,
@@ -422,10 +565,7 @@ impl ChordTrainer {
             stats: HashMap::new(),
             feedback: None,
             advance_at: None,
-            poly_since: [None; 12],
-            class_seen_at: [f64::NEG_INFINITY; 12],
-            ringing_mask: 0,
-            last_voiced: f64::NEG_INFINITY,
+            listener: ChordListener::default(),
             seq_step: 0,
             rng: Rng::new(seed),
             streak: 0,
@@ -481,8 +621,7 @@ impl ChordTrainer {
     pub fn select_chord(&mut self, chord: ChordKind, now: f64) {
         self.advance_at = None;
         self.feedback = None;
-        self.poly_since = [None; 12];
-        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.listener.clear();
         self.current = Some(ChordChallenge {
             chord,
             started: now,
@@ -495,11 +634,10 @@ impl ChordTrainer {
         let prev = self.current.map(|c| c.chord);
         if self.advance_at.take().is_some() {
             if let Some(chord) = prev {
-                self.ringing_mask = chord.voicing().pitch_class_mask(self.tuning);
+                self.listener.set_ringing(chord.voicing(), self.tuning);
             }
         }
-        self.poly_since = [None; 12];
-        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.listener.clear();
         let chords = self.config.pick.chords();
         if chords.is_empty() {
             self.current = None;
@@ -556,86 +694,15 @@ impl ChordTrainer {
             self.next(now);
         }
         let Some(voicing) = self.current_chord() else { return };
-        let target_mask = voicing.pitch_class_mask(self.tuning);
-
-        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
-            reading
-                .poly
-                .iter()
-                .copied()
-                .filter(|&f| f > 0.0)
-                .filter_map(|f| nearest_note(f, a4))
-                .filter(|r| r.cents.abs() <= 35.0)
-                .fold(0u16, |m, r| m | (1 << r.note.pitch_class()))
-        } else {
-            0
-        };
-
-        let mut frame_mask = 0u16;
-        for pc in 0..12usize {
-            if (raw_poly_mask & (1 << pc)) != 0 {
-                let since = *self.poly_since[pc].get_or_insert(now);
-                if now - since >= POLY_HOLD {
-                    frame_mask |= 1 << pc;
-                }
-            } else {
-                self.poly_since[pc] = None;
-            }
-        }
-        if let Some(n) = mono {
-            frame_mask |= 1 << n.pitch_class();
-        }
-
-        if raw_poly_mask == 0 && mono.is_none() {
-            if now - self.last_voiced > 0.2 {
-                self.ringing_mask = 0;
-                self.class_seen_at = [f64::NEG_INFINITY; 12];
-            }
-        } else {
-            self.last_voiced = now;
-        }
-
-        if self.ringing_mask != 0
-            && frame_mask != 0
-            && (frame_mask & !self.ringing_mask) == 0
-            && self.ringing_mask != target_mask
-        {
+        let Some(heard) = self.listener.listen(now, reading, mono, a4, voicing, self.tuning) else {
             return;
-        }
-        if frame_mask & !self.ringing_mask != 0 {
-            self.ringing_mask = 0;
-        }
-
-        for pc in 0..12usize {
-            if (frame_mask & (1 << pc)) != 0 {
-                self.class_seen_at[pc] = now;
-            }
-        }
-
-        let mut active_classes = 0u16;
-        for (pc, &t) in self.class_seen_at.iter().enumerate() {
-            if now - t <= STRUM_WINDOW {
-                active_classes |= 1 << pc;
-            }
-        }
-
-        let mut heard_strings = 0u8;
-        for (string, fret) in voicing.frets.iter().enumerate() {
-            if let Some(fret) = *fret {
-                let pc = self.tuning.note_at(Position { string, fret }).pitch_class();
-                if active_classes & (1 << pc) != 0 {
-                    heard_strings |= 1 << string;
-                }
-            }
-        }
-
+        };
         if let Some(ch) = self.current.as_mut() {
-            ch.heard_classes = active_classes & target_mask;
-            ch.heard_strings = heard_strings;
+            ch.heard_classes = heard.classes;
+            ch.heard_strings = heard.strings;
         }
 
-        let extra_in_frame = (frame_mask & !target_mask).count_ones();
-        if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
+        if heard.complete {
             let started = self.current.map_or(now, |c| c.started);
             let seconds = (now - started).max(0.0);
             let s = self.stats.entry(voicing.id.clone()).or_default();
@@ -646,7 +713,7 @@ impl ChordTrainer {
             self.best_streak = self.best_streak.max(self.streak);
             self.correct += 1;
             self.feedback = Some((ChordFeedback::Correct { name: voicing.name.clone(), seconds }, now));
-            self.advance_at = Some(now + 0.75);
+            self.advance_at = Some(now + ADVANCE_DELAY);
         }
     }
 

@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::analyzer::PitchReading;
-use crate::chord::{ChordKind, ChordVoicing};
+use crate::chord::{ChordKind, ChordListener, ChordVoicing};
 use crate::deck::DeckKind;
 use crate::rng::Rng;
 use crate::scale::{Scale, ScaleKind};
 use crate::srs::{unix_seconds, Grade, SrsCard};
-use crate::theory::{nearest_note, Note, Position, Tuning};
+use crate::theory::{Note, Position, Tuning};
 
 /// Whether to show the scale pattern / chord diagram on the fretboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,10 +142,6 @@ pub struct LearnProgress {
     pub best_streak: u32,
 }
 
-const STRUM_WINDOW: f64 = 1.4;
-const POLY_HOLD: f64 = 0.08;
-const CHORD_GATE_DB: f32 = -45.0;
-
 pub struct LearnTrainer {
     pub config: LearnConfig,
     pub tuning: Tuning,
@@ -158,10 +154,7 @@ pub struct LearnTrainer {
     advance_at: Option<f64>,
     last_judged: Option<Note>,
     repick: Option<Note>,
-    poly_since: [Option<f64>; 12],
-    class_seen_at: [f64; 12],
-    ringing_mask: u16,
-    last_voiced: f64,
+    listener: ChordListener,
     rng: Rng,
     pub reviewed: u32,
     pub streak: u32,
@@ -180,10 +173,7 @@ impl LearnTrainer {
             advance_at: None,
             last_judged: None,
             repick: None,
-            poly_since: [None; 12],
-            class_seen_at: [f64::NEG_INFINITY; 12],
-            ringing_mask: 0,
-            last_voiced: f64::NEG_INFINITY,
+            listener: ChordListener::default(),
             rng: Rng::new(seed),
             reviewed: 0,
             streak: 0,
@@ -278,8 +268,7 @@ impl LearnTrainer {
     pub fn select_card(&mut self, card: LearnCard, now: f64) {
         self.advance_at = None;
         self.feedback = None;
-        self.poly_since = [None; 12];
-        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.listener.clear();
         let root = self.box_root();
         self.current = Some(match card {
             LearnCard::Scale(kind) => {
@@ -367,11 +356,10 @@ impl LearnTrainer {
         let prev_key = self.current_key();
         if self.advance_at.take().is_some() {
             if let Some(ActiveCard::Chord { chord, .. }) = self.current {
-                self.ringing_mask = chord.voicing().pitch_class_mask(self.tuning);
+                self.listener.set_ringing(chord.voicing(), self.tuning);
             }
         }
-        self.poly_since = [None; 12];
-        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.listener.clear();
 
         let mut pool = self.deck_cards();
         if pool.len() > 1 {
@@ -501,91 +489,20 @@ impl LearnTrainer {
             return;
         };
         let voicing = chord.voicing();
-        let target_mask = voicing.pitch_class_mask(self.tuning);
-
-        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
-            reading
-                .poly
-                .iter()
-                .copied()
-                .filter(|&f| f > 0.0)
-                .filter_map(|f| nearest_note(f, a4))
-                .filter(|r| r.cents.abs() <= 35.0)
-                .fold(0u16, |m, r| m | (1 << r.note.pitch_class()))
-        } else {
-            0
-        };
-
-        let mut frame_mask = 0u16;
-        for pc in 0..12usize {
-            if (raw_poly_mask & (1 << pc)) != 0 {
-                let since = *self.poly_since[pc].get_or_insert(now);
-                if now - since >= POLY_HOLD {
-                    frame_mask |= 1 << pc;
-                }
-            } else {
-                self.poly_since[pc] = None;
-            }
-        }
-        if let Some(n) = mono {
-            frame_mask |= 1 << n.pitch_class();
-        }
-
-        if raw_poly_mask == 0 && mono.is_none() {
-            if now - self.last_voiced > 0.2 {
-                self.ringing_mask = 0;
-                self.class_seen_at = [f64::NEG_INFINITY; 12];
-            }
-        } else {
-            self.last_voiced = now;
-        }
-
-        if self.ringing_mask != 0
-            && frame_mask != 0
-            && (frame_mask & !self.ringing_mask) == 0
-            && self.ringing_mask != target_mask
-        {
+        let Some(heard) = self.listener.listen(now, reading, mono, a4, voicing, self.tuning) else {
             return;
-        }
-        if frame_mask & !self.ringing_mask != 0 {
-            self.ringing_mask = 0;
-        }
-
-        for pc in 0..12usize {
-            if (frame_mask & (1 << pc)) != 0 {
-                self.class_seen_at[pc] = now;
-            }
-        }
-
-        let mut active_classes = 0u16;
-        for (pc, &t) in self.class_seen_at.iter().enumerate() {
-            if now - t <= STRUM_WINDOW {
-                active_classes |= 1 << pc;
-            }
-        }
-
-        let mut heard_strings = 0u8;
-        for (string, fret) in voicing.frets.iter().enumerate() {
-            if let Some(fret) = *fret {
-                let pc = self.tuning.note_at(Position { string, fret }).pitch_class();
-                if active_classes & (1 << pc) != 0 {
-                    heard_strings |= 1 << string;
-                }
-            }
-        }
-
+        };
         if let Some(ActiveCard::Chord {
-            heard_classes: hc,
-            heard_strings: hs,
+            heard_classes,
+            heard_strings,
             ..
         }) = &mut self.current
         {
-            *hc = active_classes & target_mask;
-            *hs = heard_strings;
+            *heard_classes = heard.classes;
+            *heard_strings = heard.strings;
         }
 
-        let extra_in_frame = (frame_mask & !target_mask).count_ones();
-        if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
+        if heard.complete {
             let seconds = (now - started).max(0.1);
             let grade = Grade::for_chord(seconds);
             let key = LearnCard::Chord(chord).key();
@@ -687,6 +604,35 @@ mod tests {
         // Override grade with Hard (key 2).
         assert!(t.regrade(Grade::Hard, now));
         assert_eq!(t.card_state(&key).interval, 60.0);
+    }
+
+    #[test]
+    fn chord_card_hears_a_strum_and_ignores_it_ringing_on() {
+        let em = ChordKind::by_id("em-open").unwrap();
+        let cfg = LearnConfig { deck: DeckKind::by_id("basic-chords").unwrap(), ..Default::default() };
+        let mut t = LearnTrainer::new(Tuning::STANDARD, cfg, 3);
+        t.select_card(LearnCard::Chord(em), 0.0);
+
+        // E2 B2 G3 held past the poly hold time, loud enough for the gate.
+        let mut strum = PitchReading { level_db: -20.0, ..Default::default() };
+        for (slot, midi) in strum.poly.iter_mut().zip([40u8, 47, 55]) {
+            *slot = Note(midi).frequency(440.0);
+        }
+        t.update(0.5, &strum, None, 440.0);
+        let Some(ActiveCard::Chord { heard_classes, .. }) = t.current() else { panic!("expected chord card") };
+        assert_eq!(*heard_classes, 0, "not held long enough yet");
+        t.update(0.6, &strum, None, 440.0);
+        assert!(t.is_resolved());
+        assert_eq!(t.reviewed, 1);
+        assert_eq!(t.card_state("chord:em-open").reps, 1);
+
+        // On to another card; Em still ringing doesn't count towards it.
+        t.update(2.0, &strum, None, 440.0);
+        assert!(!t.is_resolved());
+        assert_ne!(t.current_key().as_deref(), Some("chord:em-open"));
+        t.update(2.5, &strum, None, 440.0);
+        assert!(!t.is_resolved());
+        assert_eq!(t.reviewed, 1);
     }
 
     #[test]
