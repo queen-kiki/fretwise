@@ -7,6 +7,7 @@
 mod theme;
 mod widgets;
 
+use egui::text::LayoutJob;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
@@ -197,8 +198,14 @@ impl FretwiseUi {
         // doesn't also count as a click outside it.
         let (settings_was_open, about_was_open) = (self.settings_open, self.about_open);
 
+        // Same faceplate as the rack at the bottom, framing the stage.
+        let header = egui::Frame::new()
+            .fill(rack_fill(ui))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .outer_margin(egui::Margin { bottom: 10, ..Default::default() })
+            .corner_radius(8);
         egui::TopBottomPanel::top("fretwise_header")
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin { bottom: 10, ..Default::default() }))
+            .frame(header)
             .show_separator_line(false)
             .show_inside(ui, |ui| self.header(ui, &reading, host.warning()));
 
@@ -470,56 +477,12 @@ impl FretwiseUi {
         let style = self.trainer.config.style;
         let scale = self.trainer.config.scale;
 
-        ui.vertical_centered(|ui| {
-            ui.add_space(4.0);
-            if let Some(ch) = ch {
-                let what = match self.trainer.config.labels {
-                    Labels::NoteName => ch.note.to_string(),
-                    Labels::Degree => format!("degree {}", self.label(ch.note)),
-                };
-                let text = match style {
-                    PromptStyle::NameOnString => {
-                        format!("Play {} on string {}", what, string_number(ch.position.string))
-                    }
-                    PromptStyle::FretboardDot => "Play the marked note".to_string(),
-                };
-                let text = match self.target_finger() {
-                    Some(0) => format!("{text}, open string"),
-                    Some(f) => format!("{text} with finger {f}"),
-                    None => text,
-                };
-                ui.label(RichText::new(text).size(34.0).strong());
-            } else {
-                ui.label(RichText::new("Nothing to play — widen the fret range or turn strings back on").size(22.0));
-            }
-
-            let fb = self.trainer.feedback().filter(|(_, t)| now - t < 2.0);
-            let line = match fb {
-                Some((Feedback::Correct { note, seconds }, _)) => {
-                    RichText::new(format!("✔ {} in {seconds:.1}s", self.label_full(note))).color(GOOD)
-                }
-                Some((Feedback::Wrong { played, .. }, _)) => {
-                    RichText::new(format!("× that was {}", self.label_full(played))).color(BAD)
-                }
-                Some((Feedback::Skipped { expected }, _)) => {
-                    RichText::new(format!("skipped — it was {}", self.label_full(expected))).weak()
-                }
-                None => RichText::new(match held {
-                    Some(h) => format!("hearing {}", self.label(h.note)),
-                    None => " ".to_string(),
-                })
-                .weak(),
-            };
-            ui.label(line.size(20.0));
-        });
-        ui.add_space(8.0);
-
         // Fretboard: the pattern underneath, then what's heard, then the target.
         let mut markers = Vec::new();
         if self.show_pattern {
             let visuals = ui.visuals();
-            let mut positions = self.pattern();
             let interval = |pos: Position| (self.tuning.note_at(pos).pitch_class() + 12 - scale.root % 12) % 12;
+            let mut positions = self.pattern();
             // Every note is in the chromatic scale, so only the key's root is marked.
             if scale.kind.is_chromatic() {
                 positions.retain(|&pos| interval(pos) == 0);
@@ -568,7 +531,14 @@ impl FretwiseUi {
                 });
             }
         }
-        let height = (ui.available_height() - 12.0).clamp(220.0, 360.0);
+        // Neck and terminal sit centred between header and rack; the
+        // terminal's height is last frame's, measured below.
+        let terminal_id = ui.id().with("terminal_height");
+        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
+        let gap = 8.0;
+        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
+        let spare = ui.available_height() - height - gap - terminal_h;
+        ui.add_space((spare / 2.0).max(0.0));
         let cfg = &mut self.trainer.config;
         let controls = NeckControls {
             min_fret: &mut cfg.min_fret,
@@ -576,6 +546,9 @@ impl FretwiseUi {
             strings: &mut cfg.strings,
         };
         fretboard(ui, 15, height, &markers, Some(controls));
+        ui.add_space(gap);
+        let h = self.terminal(ui, now);
+        ui.data_mut(|d| d.insert_temp(terminal_id, h));
     }
 
     /// The positions the pattern shows: every candidate for random order,
@@ -594,6 +567,104 @@ impl FretwiseUi {
         let pattern = self.pattern();
         let fingers = fingering(&pattern, self.trainer.config.min_fret)?;
         pattern.iter().position(|&p| p == ch.position).map(|i| fingers[i])
+    }
+
+    /// The prompt as a command line under the neck, what to play and then
+    /// how it went, highlighted in the flag colours.
+    /// Returns the height it took.
+    fn terminal(&self, ui: &mut egui::Ui, now: f64) -> f32 {
+        let syn = &theme::SYNTAX;
+        let big = theme::pixel_font(ui, 24.0);
+        let small = theme::pixel_font(ui, 16.0);
+
+        let mut cmd = LayoutJob::default();
+        let c = &mut cmd;
+        token(c, "> ", &big, syn.comment);
+        match self.trainer.current() {
+            Some(ch) => {
+                token(c, "play ", &big, syn.keyword);
+                match self.trainer.config.style {
+                    PromptStyle::NameOnString => {
+                        if self.trainer.config.labels == Labels::Degree {
+                            token(c, "degree ", &big, syn.text);
+                        }
+                        token(c, &self.label(ch.note), &big, syn.note);
+                        token(c, " on string ", &big, syn.text);
+                        token(c, &string_number(ch.position.string).to_string(), &big, syn.number);
+                    }
+                    PromptStyle::FretboardDot => {
+                        token(c, "the ", &big, syn.text);
+                        token(c, "ringed", &big, syn.note);
+                        token(c, " note", &big, syn.text);
+                    }
+                }
+                // In the target ring's blue, so it reads as part of that spot.
+                match self.target_finger() {
+                    Some(0) => token(c, " open string", &big, TARGET),
+                    Some(f) => {
+                        token(c, " with finger ", &big, syn.text);
+                        token(c, &f.to_string(), &big, TARGET);
+                    }
+                    None => {}
+                }
+            }
+            None => {
+                token(c, "nothing to play ", &big, syn.text);
+                token(c, "# widen the frets or turn strings on", &big, syn.comment);
+            }
+        }
+
+        let mut out = LayoutJob::default();
+        let o = &mut out;
+        let held = self.stabilizer.current();
+        match self.trainer.feedback().filter(|(_, t)| now - t < 2.0) {
+            Some((Feedback::Correct { note, seconds }, _)) => {
+                token(o, "ok ", &small, GOOD);
+                token(o, &self.label_full(note), &small, syn.note);
+                token(o, " in ", &small, syn.text);
+                token(o, &format!("{seconds:.1}s"), &small, syn.number);
+            }
+            Some((Feedback::Wrong { played, .. }, _)) => {
+                token(o, "err ", &small, BAD);
+                token(o, "that was ", &small, syn.text);
+                token(o, &self.label_full(played), &small, syn.note);
+            }
+            Some((Feedback::Skipped { expected }, _)) => {
+                token(o, "skip ", &small, syn.comment);
+                token(o, "it was ", &small, syn.text);
+                token(o, &self.label_full(expected), &small, syn.note);
+            }
+            None => match held {
+                Some(h) => {
+                    token(o, "hearing ", &small, syn.comment);
+                    token(o, &self.label(h.note), &small, syn.note);
+                }
+                None => token(o, "listening...", &small, syn.comment),
+            },
+        }
+
+        egui::Frame::new()
+            .fill(syn.screen)
+            .stroke(egui::Stroke::new(1.0_f32, syn.border))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(18, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let line = ui.label(cmd).rect;
+                // A blinking block cursor after the command.
+                if (now * 1.6).fract() < 0.55 {
+                    let cursor = egui::Rect::from_min_size(
+                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
+                        egui::vec2(big.size * 0.55, line.height() - 4.0),
+                    );
+                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
+                }
+                ui.label(out);
+            })
+            .response
+            .rect
+            .height()
     }
 
     /// The everyday controls, laid out like a plug-in's front panel.
@@ -669,6 +740,11 @@ impl FretwiseUi {
             self.trainer.reset_stats();
         }
     }
+}
+
+/// Append `text` to a terminal line in one colour.
+fn token(job: &mut LayoutJob, text: &str, font: &egui::FontId, color: Color32) {
+    job.append(text, 0.0, egui::TextFormat::simple(font.clone(), color));
 }
 
 /// A small caps caption over a control, as printed on hardware.

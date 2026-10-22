@@ -58,14 +58,14 @@ pub fn fretboard(
     let accent = accent(ui);
 
     // Dots stay a readable size however big the window gets, and leave room
-    // for the string names, the open strings and the fret strip.
+    // for the string names, the open strings and the fret strip on top.
     let max_radius = 18.0;
     let pad = max_radius + 4.0;
     let strip_h = 24.0;
     let label_w = 40.0;
     let open_w = 2.0 * max_radius + 8.0;
-    let top = rect.top() + pad;
-    let bottom = rect.bottom() - strip_h - pad;
+    let top = rect.top() + strip_h + pad;
+    let bottom = rect.bottom() - pad;
     let nut_x = rect.left() + label_w + open_w;
     let fret_w = (rect.right() - 8.0 - nut_x) / frets as f32;
     let spacing = (bottom - top) / 5.0;
@@ -170,8 +170,8 @@ pub fn fretboard(
         painter.text(name_rect.center(), Align2::CENTER_CENTER, name, FontId::proportional(14.0), name_color);
     }
 
-    // Fret range: shade the frets outside it, then the strip of fret numbers below.
-    let strip = Rect::from_min_max(pos2(nut_x - open_w, rect.bottom() - strip_h), pos2(board_end, rect.bottom()));
+    // Fret range: shade the frets outside it, then the strip of fret numbers above.
+    let strip = Rect::from_min_max(pos2(nut_x - open_w, rect.top()), pos2(board_end, rect.top() + strip_h));
     match range {
         Some((min, max)) => {
             let shade = visuals.panel_fill.gamma_multiply(0.65);

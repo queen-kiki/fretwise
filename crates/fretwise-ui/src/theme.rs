@@ -17,8 +17,55 @@ pub fn apply(ctx: &egui::Context) {
     }
     ctx.set_visuals_of(egui::Theme::Dark, dark());
     ctx.set_visuals_of(egui::Theme::Light, light());
+    ctx.add_font(egui::epaint::text::FontInsert::new(
+        "Monocraft",
+        egui::FontData::from_static(include_bytes!("../assets/fonts/Monocraft.ttf")),
+        vec![egui::epaint::text::InsertFontFamily {
+            family: pixel_family(),
+            priority: egui::epaint::text::FontPriority::Highest,
+        }],
+    ));
     ctx.data_mut(|d| d.insert_temp(id, true));
 }
+
+/// Monocraft, a Minecraft-style monospace font (SIL OFL 1.1), for the
+/// terminal under the neck.
+pub fn pixel_family() -> egui::FontFamily {
+    egui::FontFamily::Name("pixel".into())
+}
+
+/// The pixel font at `size`, or egui's monospace until it's loaded (fonts
+/// added this frame only arrive on the next).
+pub fn pixel_font(ui: &egui::Ui, size: f32) -> egui::FontId {
+    let family = pixel_family();
+    if ui.fonts(|f| f.families().contains(&family)) {
+        egui::FontId::new(size, family)
+    } else {
+        egui::FontId::monospace(size)
+    }
+}
+
+/// Token colours for the terminal: a dark screen in either theme, with the
+/// flag colours for what matters.
+pub struct Syntax {
+    pub screen: Color32,
+    pub border: Color32,
+    pub text: Color32,
+    pub comment: Color32,
+    pub keyword: Color32,
+    pub note: Color32,
+    pub number: Color32,
+}
+
+pub const SYNTAX: Syntax = Syntax {
+    screen: Color32::from_rgb(22, 14, 21),
+    border: Color32::from_rgb(84, 58, 78),
+    text: Color32::from_rgb(226, 210, 220),
+    comment: Color32::from_rgb(140, 112, 132),
+    keyword: TRANS_PINK,
+    note: TRANS_BLUE,
+    number: TRANS_WHITE,
+};
 
 fn dark() -> Visuals {
     let mut v = Visuals::dark();
