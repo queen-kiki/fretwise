@@ -227,16 +227,6 @@ impl DeckKind {
             .map(|(name, range)| (name.as_str(), range.clone().map(|i| Self(i as u16))))
     }
 
-    /// Groups filtered to decks that contain at least one chord (for the Chords tab).
-    pub fn chord_groups() -> Vec<(&'static str, Vec<Self>)> {
-        Self::groups()
-            .filter_map(|(name, decks)| {
-                let items: Vec<Self> = decks.filter(|d| !d.chords().is_empty()).collect();
-                (!items.is_empty()).then_some((name, items))
-            })
-            .collect()
-    }
-
     pub fn by_id(id: &str) -> Option<Self> {
         registry().entries.iter().position(|e| e.def.id == id).map(|i| Self(i as u16))
     }

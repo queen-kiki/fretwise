@@ -473,11 +473,17 @@ impl FretwiseUi {
         due + new_cards == 0 && !self.keep_going && !self.learn_trainer.deck_cards().is_empty()
     }
 
-    /// Cards in `deck`, as Learn keys.
-    fn deck_keys(deck: DeckKind) -> Vec<String> {
+    /// Every card in `deck`: its scales (chromatic has no shape to learn),
+    /// then its chords.
+    fn deck_card_list(deck: DeckKind) -> Vec<LearnCard> {
         let scales = deck.scales().iter().filter(|k| !k.is_chromatic()).map(|&k| LearnCard::Scale(k));
         let chords = deck.chords().iter().map(|&c| LearnCard::Chord(c));
-        scales.chain(chords).map(|c| c.key()).collect()
+        scales.chain(chords).collect()
+    }
+
+    /// Cards in `deck`, as Learn keys.
+    fn deck_keys(deck: DeckKind) -> Vec<String> {
+        Self::deck_card_list(deck).into_iter().map(LearnCard::key).collect()
     }
 
     /// A deck to try next: one with cards waiting (due or new) that aren't
@@ -1465,33 +1471,18 @@ impl FretwiseUi {
         let mut close_requested = false;
         let modal = egui::Modal::new(egui::Id::new("fretwise_deck_browser")).frame(frame).show(ctx, |ui| {
             ui.set_width(580.0);
-            let is_chords_tab = self.tab == Tab::Chords;
 
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Deck Browser").size(20.0).strong());
                 ui.add_space(8.0);
-                if is_chords_tab {
-                    let before = self.chord_trainer.config.deck;
-                    let raw = DeckKind::chord_groups();
-                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = raw
-                        .iter()
-                        .map(|(group, kinds)| (*group, kinds.iter().map(|&k| (k, k.name())).collect()))
-                        .collect();
-                    let shown = self.chord_trainer.config.deck.name();
-                    dropdown(ui, "browser_chord_deck", &mut self.chord_trainer.config.deck, shown, &groups, 210.0, 14.0);
-                    if self.chord_trainer.config.deck != before {
-                        self.chord_trainer.restart(now);
-                    }
-                } else {
-                    let before = self.learn_trainer.config.deck;
-                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
-                        .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
-                        .collect();
-                    let shown = self.learn_trainer.config.deck.name();
-                    dropdown(ui, "browser_learn_deck", &mut self.learn_trainer.config.deck, shown, &groups, 210.0, 14.0);
-                    if self.learn_trainer.config.deck != before {
-                        self.learn_trainer.restart(now);
-                    }
+                let before = self.learn_trainer.config.deck;
+                let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
+                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                    .collect();
+                let shown = self.learn_trainer.config.deck.name();
+                dropdown(ui, "browser_learn_deck", &mut self.learn_trainer.config.deck, shown, &groups, 210.0, 14.0);
+                if self.learn_trainer.config.deck != before {
+                    self.learn_trainer.restart(now);
                 }
 
                 // No close button: Esc or a click outside closes it.
@@ -1511,28 +1502,7 @@ impl FretwiseUi {
                 });
             });
 
-            let cards: Vec<LearnCard> = if is_chords_tab {
-                self.chord_trainer
-                    .config
-                    .deck
-                    .chords()
-                    .iter()
-                    .copied()
-                    .map(LearnCard::Chord)
-                    .collect()
-            } else {
-                let deck = self.learn_trainer.config.deck;
-                let mut list = Vec::new();
-                for &kind in deck.scales() {
-                    if !kind.is_chromatic() {
-                        list.push(LearnCard::Scale(kind));
-                    }
-                }
-                for &chord in deck.chords() {
-                    list.push(LearnCard::Chord(chord));
-                }
-                list
-            };
+            let cards = Self::deck_card_list(self.learn_trainer.config.deck);
 
             let unix_now = unix_seconds(now);
             let (mut due, mut new_cards, mut memorized) = (0usize, 0usize, 0usize);
@@ -1563,11 +1533,7 @@ impl FretwiseUi {
             });
             ui.separator();
 
-            let active_key = if is_chords_tab {
-                self.chord_trainer.current().map(|c| LearnCard::Chord(c.chord).key())
-            } else {
-                self.learn_trainer.current_key()
-            };
+            let active_key = self.learn_trainer.current_key();
             let query = self.browser_filter.trim().to_ascii_lowercase();
             let mut picked_card: Option<LearnCard> = None;
             let mut reset_key: Option<String> = None;
@@ -1625,14 +1591,9 @@ impl FretwiseUi {
                 self.learn_trainer.reset_card(&key);
             }
             if let Some(card) = picked_card {
-                match (is_chords_tab, card) {
-                    (true, LearnCard::Chord(chord)) => self.chord_trainer.select_chord(chord, now),
-                    _ => {
-                        self.tab = Tab::Learn;
-                        self.keep_going = true;
-                        self.learn_trainer.select_card(card, now);
-                    }
-                }
+                self.tab = Tab::Learn;
+                self.keep_going = true;
+                self.learn_trainer.select_card(card, now);
                 close_requested = true;
             }
         });

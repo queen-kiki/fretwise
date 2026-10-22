@@ -298,8 +298,8 @@ pub enum ChordOrder {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChordTrainerConfig {
-    /// No longer drives the drill (that's `pick`); kept so saved settings
-    /// from before chord picks still load.
+    /// Unused since the drill follows `pick`; kept so saved settings from
+    /// before chord picks still load and save unchanged.
     #[serde(alias = "set")]
     pub deck: DeckKind,
     /// Which chords the drill asks for.
