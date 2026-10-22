@@ -4,6 +4,7 @@
 //! The host's only job is to hand [`FretwiseUi::show`] the latest
 //! [`PitchReading`] each frame, plus anything it adds through [`Host`].
 
+mod lucide;
 mod theme;
 mod widgets;
 

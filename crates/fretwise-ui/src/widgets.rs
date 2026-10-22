@@ -653,8 +653,8 @@ pub fn dropdown<T: PartialEq + Copy>(
     *value != before
 }
 
-/// The trainer's main action: a square accent button with a painted
-/// skip-forward icon (two triangles and a bar).
+/// The trainer's main action: a square accent button with Lucide's
+/// skip-forward icon.
 pub fn skip_button(ui: &mut Ui, size: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     let hot = response.hovered();
@@ -668,23 +668,11 @@ pub fn skip_button(ui: &mut Ui, size: f32) -> Response {
     let painter = ui.painter();
     painter.rect_filled(rect, 8.0, fill);
     let ink = ui.visuals().selection.stroke.color;
-    let c = rect.center();
-    let h = size * 0.17;
-    let w = size * 0.15;
-    for dx in [-w, 0.0] {
-        let x = c.x + dx - w * 0.5;
-        painter.add(egui::Shape::convex_polygon(
-            vec![pos2(x, c.y - h), pos2(x + w, c.y), pos2(x, c.y + h)],
-            ink,
-            Stroke::NONE,
-        ));
-    }
-    let bar = Rect::from_min_size(pos2(c.x + w * 0.5 + 1.0, c.y - h), vec2(size * 0.05, 2.0 * h));
-    painter.rect_filled(bar, 1.0, ink);
+    crate::lucide::paint(painter, rect.shrink(size * 0.27), crate::lucide::SKIP_FORWARD, ink);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// A painted gear: a toothed ring with a hole, brighter when hovered or on.
+/// The settings gear (Lucide), brighter when hovered, accent when open.
 pub fn gear_button(ui: &mut Ui, on: bool) -> Response {
     let size = 26.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
@@ -696,16 +684,7 @@ pub fn gear_button(ui: &mut Ui, on: bool) -> Response {
     } else {
         visuals.text_color()
     };
-    let painter = ui.painter();
-    let c = rect.center();
-    let teeth = 8;
-    for i in 0..teeth {
-        let a = i as f32 / teeth as f32 * std::f32::consts::TAU;
-        let dir = vec2(a.cos(), a.sin());
-        painter.line_segment([c + dir * 6.0, c + dir * 11.0], Stroke::new(4.0_f32, color));
-    }
-    painter.circle_filled(c, 8.5, color);
-    painter.circle_filled(c, 3.5, ui.visuals().panel_fill);
+    crate::lucide::paint(ui.painter(), rect, crate::lucide::SETTINGS, color);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -775,16 +754,16 @@ pub fn sparkles(painter: &egui::Painter, origin: egui::Pos2, age: f32) {
     }
 }
 
-/// Header tools, painted to match the gear.
+/// Header tools, all Lucide icons like the gear.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    /// Free practice: an eighth note.
+    /// Free practice: Lucide "eighth-note".
     Practice,
-    /// Tuner: a gauge with a needle.
+    /// Tuner: Lucide "gauge".
     Tuner,
-    /// Stats: three bars.
+    /// Stats: Lucide "chart-no-axes-column".
     Stats,
-    /// Back to Learn: a chevron.
+    /// Back to Learn: Lucide "chevron-left".
     Back,
 }
 
@@ -799,65 +778,20 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
     } else {
         visuals.text_color()
     };
-    let painter = ui.painter();
-    let c = rect.center();
-    let stroke = Stroke::new(2.5_f32, color);
-    match icon {
-        Icon::Practice => {
-            painter.circle_filled(c + vec2(-3.5, 6.0), 4.5, color);
-            painter.line_segment([c + vec2(0.5, 6.0), c + vec2(0.5, -9.0)], stroke);
-            painter.line_segment([c + vec2(0.5, -9.0), c + vec2(7.0, -4.0)], stroke);
-        }
-        Icon::Tuner => {
-            let pivot = c + vec2(0.0, 6.0);
-            let arc: Vec<egui::Pos2> = (0..=16)
-                .map(|i| {
-                    let a = PI + PI * i as f32 / 16.0;
-                    pivot + vec2(a.cos(), a.sin()) * 11.0
-                })
-                .collect();
-            painter.add(egui::Shape::line(arc, stroke));
-            painter.line_segment([pivot, pivot + vec2(5.0, -8.0)], stroke);
-            painter.circle_filled(pivot, 2.5, color);
-        }
-        Icon::Stats => {
-            for (i, h) in [7.0, 12.0, 17.0].iter().enumerate() {
-                let x = c.x - 8.0 + i as f32 * 6.5;
-                let bar = Rect::from_min_max(pos2(x, c.y + 9.0 - h), pos2(x + 4.0, c.y + 9.0));
-                painter.rect_filled(bar, 1.0, color);
-            }
-        }
-        Icon::Back => {
-            let thick = Stroke::new(3.0_f32, color);
-            painter.line_segment([c + vec2(4.0, -8.0), c + vec2(-4.0, 0.0)], thick);
-            painter.line_segment([c + vec2(-4.0, 0.0), c + vec2(4.0, 8.0)], thick);
-        }
-    }
+    let glyph = match icon {
+        Icon::Practice => crate::lucide::EIGHTH_NOTE,
+        Icon::Tuner => crate::lucide::GAUGE,
+        Icon::Stats => crate::lucide::CHART,
+        Icon::Back => crate::lucide::CHEVRON_LEFT,
+    };
+    crate::lucide::paint(ui.painter(), rect, glyph, color);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// Lucide's "flame" icon (ISC licence, see assets/icons/Lucide-LICENSE.txt),
-/// its 24x24 path flattened to points once so egui can stroke it.
-const FLAME: [(f32, f32); 83] = [
-    (12.00, 3.00), (12.22, 3.79), (12.48, 4.54), (12.78, 5.27), (13.12, 5.96), (13.50, 6.62), (13.92, 7.26),
-    (14.38, 7.87), (14.88, 8.44), (15.42, 8.98), (16.00, 9.50), (16.57, 10.01), (17.08, 10.52), (17.53, 11.04),
-    (17.92, 11.58), (18.25, 12.12), (18.52, 12.68), (18.73, 13.25), (18.88, 13.82), (18.97, 14.40), (19.00, 15.00),
-    (18.94, 15.91), (18.76, 16.81), (18.47, 17.68), (18.06, 18.50), (17.55, 19.26), (16.95, 19.95), (16.26, 20.55),
-    (15.50, 21.06), (14.68, 21.47), (13.81, 21.76), (12.91, 21.94), (12.00, 22.00), (11.09, 21.94), (10.19, 21.76),
-    (9.32, 21.47), (8.50, 21.06), (7.74, 20.55), (7.05, 19.95), (6.45, 19.26), (5.94, 18.50), (5.53, 17.68),
-    (5.24, 16.81), (5.06, 15.91), (5.00, 15.00), (5.03, 14.46), (5.11, 13.94), (5.26, 13.42), (5.45, 12.92),
-    (5.70, 12.45), (6.00, 12.00), (6.09, 12.65), (6.33, 13.25), (6.73, 13.77), (7.25, 14.17), (7.85, 14.41),
-    (8.50, 14.50), (9.15, 14.41), (9.75, 14.17), (10.27, 13.77), (10.67, 13.25), (10.91, 12.65), (11.00, 12.00),
-    (10.96, 11.43), (10.84, 10.90), (10.68, 10.42), (10.47, 9.95), (10.25, 9.50), (10.03, 9.05), (9.82, 8.58),
-    (9.66, 8.10), (9.54, 7.57), (9.50, 7.00), (9.53, 6.60), (9.60, 6.20), (9.72, 5.80), (9.90, 5.40),
-    (10.12, 5.00), (10.40, 4.60), (10.72, 4.20), (11.10, 3.80), (11.53, 3.40), (12.00, 3.00)
-];
-
-/// The streak flame: Lucide's outline in pink, `h` points tall.
+/// The streak flame: Lucide's "flame" in pink, `h` points tall.
 pub fn flame(painter: &egui::Painter, c: egui::Pos2, h: f32) {
-    let scale = h / 24.0;
-    let pts: Vec<egui::Pos2> = FLAME.iter().map(|&(x, y)| c + vec2(x - 12.0, y - 12.5) * scale).collect();
-    painter.add(egui::Shape::closed_line(pts, Stroke::new(2.0 * scale, crate::theme::TRANS_PINK)));
+    let rect = Rect::from_center_size(c, vec2(h, h));
+    crate::lucide::paint(painter, rect, crate::lucide::FLAME, crate::theme::TRANS_PINK);
 }
 
 /// Today's session as one bar: done over done + still to go, filled with

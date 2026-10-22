@@ -132,9 +132,11 @@ Minecraft-style monospace font by Idrees Hassan
 License 1.1. Only the regular `Monocraft.ttf` is bundled, unmodified, in
 `crates/fretwise-ui/assets/fonts/` next to its licence (`Monocraft-OFL.txt`).
 
-The streak flame is the "flame" icon from **Lucide** (https://lucide.dev),
-ISC licence, its SVG path flattened to points in `widgets.rs`; the licence
-is in `crates/fretwise-ui/assets/icons/Lucide-LICENSE.txt`.
+The icons (flame, eighth note, gauge, chart, settings, chevron, skip) are
+from **Lucide** (https://lucide.dev), ISC licence; the licence is in
+`crates/fretwise-ui/assets/icons/Lucide-LICENSE.txt`. egui draws them from
+point lists in `crates/fretwise-ui/src/lucide.rs`, generated from the SVGs
+by `tools/lucide_to_rust.py`.
 
 ### ASIO (optional)
 
