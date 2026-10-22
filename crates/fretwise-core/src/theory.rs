@@ -8,6 +8,11 @@ const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
+/// "C", "C#", ... for a pitch class (taken mod 12).
+pub fn pitch_class_name(pc: u8) -> &'static str {
+    NOTE_NAMES[(pc % 12) as usize]
+}
+
 /// A note identified by its MIDI number (E2 = 40, A4 = 69).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]

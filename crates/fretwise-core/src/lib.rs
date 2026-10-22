@@ -9,6 +9,7 @@
 pub mod analyzer;
 pub mod chime;
 pub mod pitch;
+pub mod scale;
 pub mod stabilizer;
 pub mod theory;
 pub mod trainer;
@@ -16,6 +17,7 @@ pub mod trainer;
 pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use chime::Chime;
 pub use pitch::{PitchEstimate, Yin};
+pub use scale::{Scale, ScaleKind};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};
 pub use trainer::{Challenge, Feedback, PositionStats, Progress, PromptStyle, Trainer, TrainerConfig};
