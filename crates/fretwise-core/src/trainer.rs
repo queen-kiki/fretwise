@@ -236,7 +236,7 @@ impl Trainer {
         self.wrong = 0;
     }
 
-    pub fn candidates(&self) -> Vec<Position> {
+    pub fn fingering_positions(&self) -> Vec<Position> {
         let c = &self.config;
         let mut out = Vec::new();
         for string in 0..6 {
@@ -245,10 +245,24 @@ impl Trainer {
             }
             for fret in c.min_fret..=c.max_fret.max(c.min_fret) {
                 let pos = Position { string, fret };
-                if !c.scale.contains(self.tuning.note_at(pos)) {
-                    continue;
+                if c.scale.contains(self.tuning.note_at(pos)) {
+                    out.push(pos);
                 }
-                out.push(pos);
+            }
+        }
+        out
+    }
+
+    pub fn candidates(&self) -> Vec<Position> {
+        let mut out = self.fingering_positions();
+        // Trim to whole octaves of the key's root when at least two roots fit,
+        // so a range runs root to root (e.g. A2..=A4 in box 1, without the
+        // stray C5 on top).
+        let root = self.config.scale.root % 12;
+        let roots = || out.iter().map(|&p| self.tuning.note_at(p)).filter(|n| n.pitch_class() == root);
+        if let (Some(lo), Some(hi)) = (roots().min(), roots().max()) {
+            if lo < hi {
+                out.retain(|&p| (lo..=hi).contains(&self.tuning.note_at(p)));
             }
         }
         out
@@ -519,7 +533,8 @@ mod tests {
 
         let seq = t.sequence();
         let names: Vec<String> = seq.iter().map(|&p| t.tuning.note_at(p).to_string()).collect();
-        assert_eq!(names, ["A2", "C3", "D3", "E3", "G3", "A3", "C4", "D4", "E4", "G4", "A4", "C5"]);
+        // Trimmed to root-to-root octaves (A2..=A4, leaving out the C5 on fret 8).
+        assert_eq!(names, ["A2", "C3", "D3", "E3", "G3", "A3", "C4", "D4", "E4", "G4", "A4"]);
 
         let mut played = Vec::new();
         let mut now = 0.0;

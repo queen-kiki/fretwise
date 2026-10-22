@@ -564,7 +564,7 @@ impl FretwiseUi {
     /// and the pattern fits one hand position.
     fn target_finger(&self) -> Option<u8> {
         let ch = self.trainer.current().filter(|_| self.show_fingering)?;
-        let pattern = self.pattern();
+        let pattern = self.trainer.fingering_positions();
         let fingers = fingering(&pattern, self.trainer.config.min_fret)?;
         pattern.iter().position(|&p| p == ch.position).map(|i| fingers[i])
     }

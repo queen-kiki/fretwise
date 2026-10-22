@@ -26,6 +26,9 @@ move when you play.
   degrees.
 - **Fret range**: drag the lit strip of fret numbers under the neck. Drag an
   end to resize it, drag the middle to move it, or click a fret outside it.
+  When at least two roots of the key fit in the range, notes below the lowest
+  root and above the highest root are left out, so the pattern runs from
+  octave to octave.
 - **Strings**: go by number, 1 = high E to 6 = low E, on the neck and in the
   prompt. Click a string number left of the neck to leave it out.
 - **Fingering**: when the fret range fits one hand position (up to 5 frets,
