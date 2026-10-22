@@ -2,12 +2,15 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
 /// A note identified by its MIDI number (E2 = 40, A4 = 69).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Note(pub u8);
 
 impl Note {
@@ -67,7 +70,7 @@ pub fn nearest_note(freq: f32, a4: f32) -> Option<NoteReading> {
 }
 
 /// A spot on the neck. `string` 0 is the lowest (thickest) string.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Position {
     pub string: usize,
     pub fret: u8,
@@ -94,6 +97,11 @@ impl Tuning {
         strings: [Note(39), Note(44), Note(49), Note(54), Note(58), Note(63)],
     };
     pub const ALL: [Tuning; 3] = [Self::STANDARD, Self::DROP_D, Self::EB_STANDARD];
+
+    /// The built-in tuning with these open strings, e.g. when loading saved state.
+    pub fn from_strings(strings: [Note; 6]) -> Option<Tuning> {
+        Self::ALL.into_iter().find(|t| t.strings == strings)
+    }
 
     pub fn note_at(&self, pos: Position) -> Note {
         Note(self.strings[pos.string].0 + pos.fret)

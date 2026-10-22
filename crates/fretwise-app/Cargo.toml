@@ -20,3 +20,6 @@ fretwise-ui.workspace = true
 eframe.workspace = true
 egui.workspace = true
 cpal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true

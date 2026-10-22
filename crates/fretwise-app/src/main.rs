@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+mod state;
 
 use audio::AudioEngine;
 use cpal::HostId;
 use fretwise_ui::FretwiseUi;
+use state::{AudioSettings, SavedState, Store};
 
 struct App {
     audio: AudioEngine,
@@ -15,23 +17,52 @@ struct App {
     channel: usize,
     channel_count: u16,
     error: Option<String>,
+    store: Store,
+    last_save: f64,
 }
 
 impl App {
     fn new() -> Self {
-        let host = cpal::default_host().id();
+        let (store, saved) = Store::open();
+        let audio = saved.audio;
+        let saved_host = AudioEngine::hosts()
+            .into_iter()
+            .find(|h| Some(h.name()) == audio.host.as_deref());
+        let host = saved_host.unwrap_or_else(|| cpal::default_host().id());
+        // Keep the saved device even if it's unplugged right now: it shows as
+        // "device not found" until it's back and ⟳ is pressed, rather than
+        // being forgotten in favour of the default.
+        let (device, channel) = match (saved_host, audio.device) {
+            (Some(_), Some(d)) => (Some(d), audio.channel),
+            _ => (AudioEngine::default_input(host), 0),
+        };
         let mut app = Self {
             audio: AudioEngine::new(),
-            ui: FretwiseUi::default(),
+            ui: FretwiseUi::from_state(saved.ui),
             host,
-            device: AudioEngine::default_input(host),
+            device,
             devices: AudioEngine::input_devices(host),
-            channel: 0,
+            channel,
             channel_count: 0,
             error: None,
+            store,
+            last_save: 0.0,
         };
         app.restart();
         app
+    }
+
+    fn save(&mut self) {
+        let state = SavedState {
+            audio: AudioSettings {
+                host: Some(self.host.name().to_string()),
+                device: self.device.clone(),
+                channel: self.channel,
+            },
+            ui: self.ui.state(),
+            ..Default::default()
+        };
+        self.store.save(&state);
     }
 
     fn restart(&mut self) {
@@ -42,6 +73,9 @@ impl App {
             return;
         };
         self.channel_count = AudioEngine::channel_count(self.host, &device);
+        if self.channel_count > 0 {
+            self.channel = self.channel.min(self.channel_count as usize - 1);
+        }
         if let Err(e) = self.audio.start(self.host, &device, self.channel) {
             self.error = Some(e);
         }
@@ -117,6 +151,19 @@ impl eframe::App for App {
         });
         let reading = self.audio.shared.load();
         egui::CentralPanel::default().show(ctx, |ui| self.ui.show(ui, reading));
+
+        // Saving is skipped when nothing changed, so checking often is cheap.
+        let now = ctx.input(|i| i.time);
+        if now - self.last_save >= 1.0 || ctx.input(|i| i.viewport().close_requested()) {
+            self.last_save = now;
+            self.save();
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.save();
     }
 }
 

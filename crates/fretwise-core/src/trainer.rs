@@ -3,9 +3,11 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::theory::{Note, Position, Tuning};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptStyle {
     /// "Play C on the A string" — learn where notes live.
     NameOnString,
@@ -13,7 +15,8 @@ pub enum PromptStyle {
     FretboardDot,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TrainerConfig {
     pub min_fret: u8,
     pub max_fret: u8,
@@ -43,7 +46,8 @@ pub struct Challenge {
     pub misses: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PositionStats {
     pub attempts: u32,
     pub first_try: u32,
@@ -73,6 +77,48 @@ pub enum Feedback {
     Correct { note: Note, seconds: f64 },
     Wrong { played: Note, expected: Note },
     Skipped { expected: Note },
+}
+
+/// Everything the trainer has learned about the player, for saving between runs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Progress {
+    /// Stored as a list: JSON object keys can only be strings.
+    #[serde(with = "stats_list")]
+    pub stats: HashMap<Position, PositionStats>,
+    pub streak: u32,
+    pub best_streak: u32,
+    pub correct: u32,
+    pub wrong: u32,
+}
+
+mod stats_list {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry {
+        #[serde(flatten)]
+        position: Position,
+        #[serde(flatten)]
+        stats: PositionStats,
+    }
+
+    pub fn serialize<S: Serializer>(map: &HashMap<Position, PositionStats>, s: S) -> Result<S::Ok, S::Error> {
+        // Sorted so saved files diff cleanly.
+        let mut entries: Vec<Entry> = map.iter().map(|(&position, &stats)| Entry { position, stats }).collect();
+        entries.sort_by_key(|e| (e.position.string, e.position.fret));
+        entries.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<HashMap<Position, PositionStats>, D::Error> {
+        let entries = Vec::<Entry>::deserialize(d)?;
+        Ok(entries
+            .into_iter()
+            .filter(|e| e.position.string < 6)
+            .map(|e| (e.position, e.stats))
+            .collect())
+    }
 }
 
 pub struct Trainer {
@@ -131,6 +177,24 @@ impl Trainer {
 
     pub fn stats(&self, pos: Position) -> Option<&PositionStats> {
         self.stats.get(&pos)
+    }
+
+    pub fn progress(&self) -> Progress {
+        Progress {
+            stats: self.stats.clone(),
+            streak: self.streak,
+            best_streak: self.best_streak,
+            correct: self.correct,
+            wrong: self.wrong,
+        }
+    }
+
+    pub fn set_progress(&mut self, p: Progress) {
+        self.stats = p.stats;
+        self.streak = p.streak;
+        self.best_streak = p.best_streak.max(p.streak);
+        self.correct = p.correct;
+        self.wrong = p.wrong;
     }
 
     pub fn reset_stats(&mut self) {
@@ -326,6 +390,35 @@ mod tests {
         t.update(1.0, Some(target));
         let s = t.stats(t.current().unwrap().position).unwrap();
         assert_eq!((s.attempts, s.first_try), (1, 0));
+    }
+
+    #[test]
+    fn progress_round_trips_through_json() {
+        let mut t = trainer();
+        for i in 0..5 {
+            let note = t.current().unwrap().note;
+            t.update(i as f64 * 2.0 + 0.5, Some(Note(note.0 + 1)));
+            t.update(i as f64 * 2.0 + 1.0, Some(note));
+            t.update(i as f64 * 2.0 + 1.9, None);
+        }
+        let p = t.progress();
+        assert!(!p.stats.is_empty());
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Progress = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
+
+        let mut fresh = Trainer::new(Tuning::STANDARD, TrainerConfig::default(), 1);
+        fresh.set_progress(back);
+        assert_eq!(fresh.progress(), p);
+    }
+
+    #[test]
+    fn missing_fields_fall_back_to_defaults() {
+        let p: Progress = serde_json::from_str(r#"{"correct": 3}"#).unwrap();
+        assert_eq!(p.correct, 3);
+        assert!(p.stats.is_empty());
+        let c: TrainerConfig = serde_json::from_str(r#"{"max_fret": 5}"#).unwrap();
+        assert_eq!(c, TrainerConfig { max_fret: 5, ..TrainerConfig::default() });
     }
 
     #[test]

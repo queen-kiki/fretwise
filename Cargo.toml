@@ -17,6 +17,9 @@ fretwise-ui = { path = "crates/fretwise-ui" }
 egui = "0.31"
 eframe = "0.31"
 cpal = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "7"
 
 # Pitch detection runs per audio block; keep it fast even in debug builds
 # so `cargo run` doesn't drop out.

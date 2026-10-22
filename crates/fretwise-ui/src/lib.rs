@@ -9,8 +9,9 @@ mod widgets;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, string_number};
 use fretwise_core::{
-    Feedback, NoteStabilizer, PitchReading, Position, PromptStyle, Trainer, TrainerConfig, Tuning,
+    Feedback, Note, NoteStabilizer, PitchReading, Position, Progress, PromptStyle, Trainer, TrainerConfig, Tuning,
 };
+use serde::{Deserialize, Serialize};
 
 use widgets::{fretboard, level_meter, tuner_gauge, Marker};
 
@@ -19,7 +20,7 @@ const BAD: Color32 = Color32::from_rgb(230, 90, 80);
 const TARGET: Color32 = Color32::from_rgb(90, 160, 255);
 const HEARD: Color32 = Color32::from_rgb(240, 190, 70);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Tab {
     Tuner,
     Trainer,
@@ -52,7 +53,53 @@ impl Default for FretwiseUi {
     }
 }
 
+/// What the UI keeps between runs: settings and training progress. Opaque to
+/// the host, which only decides where it's stored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiState {
+    tab: Tab,
+    a4: f32,
+    /// Open strings, lowest first; matched against [`Tuning::ALL`] on load.
+    tuning: [Note; 6],
+    trainer: TrainerConfig,
+    progress: Progress,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        FretwiseUi::default().state()
+    }
+}
+
 impl FretwiseUi {
+    pub fn from_state(state: UiState) -> Self {
+        let defaults = Self::default();
+        let mut ui = Self {
+            tab: state.tab,
+            a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
+            tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
+            ..defaults
+        };
+        let mut cfg = state.trainer;
+        cfg.max_fret = cfg.max_fret.min(15);
+        cfg.min_fret = cfg.min_fret.min(cfg.max_fret);
+        ui.trainer.tuning = ui.tuning;
+        ui.trainer.config = cfg;
+        ui.trainer.set_progress(state.progress);
+        ui
+    }
+
+    pub fn state(&self) -> UiState {
+        UiState {
+            tab: self.tab,
+            a4: self.a4,
+            tuning: self.tuning.strings,
+            trainer: self.trainer.config,
+            progress: self.trainer.progress(),
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, reading: PitchReading) {
         let now = ui.input(|i| i.time);
         let held = self.stabilizer.update(now, &reading, self.a4);

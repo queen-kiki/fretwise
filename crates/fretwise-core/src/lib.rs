@@ -16,4 +16,4 @@ pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use pitch::{PitchEstimate, Yin};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};
-pub use trainer::{Challenge, Feedback, PositionStats, PromptStyle, Trainer, TrainerConfig};
+pub use trainer::{Challenge, Feedback, PositionStats, Progress, PromptStyle, Trainer, TrainerConfig};

@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 fretwise-core.workspace = true
 egui.workspace = true
+serde.workspace = true
