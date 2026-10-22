@@ -2,18 +2,20 @@
 
 Guitar learning app for electric guitar through an audio interface.
 
-- **Fretboard trainer**: asks for a note on a string (or shows a dot), listens
-  for it, and asks more often about the positions you're slow on or miss.
-- **Chord trainer**: data-driven chord curricula (beginner open chords through
-  barre chords), recognizing both full strums (via FFT polyphonic detection)
-  and slow strums / arpeggios.
-- **Learn (Anki spaced repetition)**: SM-2 flashcards across whole scale
-  patterns and chords (`Both`, `Scales`, or `Chords`), auto-graded hands-free
-  from speed and accuracy (with `1`–`4` keys to override as `Again` / `Hard` /
-  `Good` / `Easy`) and hiding the fretboard diagram once a card matures so you
-  recall shapes from memory.
+- **Learn** (the home screen, Anki-style spaced repetition): SM-2 flashcards
+  for whole scale patterns and chords, picked from a deck. Cards are graded
+  hands-free from speed and accuracy; in the pause after a card, keys `1`–`4`
+  override the grade as `Again` / `Hard` / `Good` / `Easy`. Once a card
+  matures, the shape on the neck is hidden so you recall it from memory. The
+  **Cards** button opens the deck browser.
+- **Free practice**, from the eighth-note button:
+  - **Notes**: asks for a note on a string (or shows a dot), listens for it,
+    and asks more often about the positions you're slow on or miss.
+  - **Chords**: a chord family or a single chord, recognizing both full
+    strums (via FFT polyphonic detection) and slow strums / arpeggios.
 - **Tuner**: note, cents gauge, and which string to turn which way.
-- **Progress**: per-position heatmap of first-try accuracy and average time.
+- **Stats**: per-position heatmap of the note trainer's first-try accuracy
+  and average time.
 
 ## Run
 
@@ -25,7 +27,7 @@ Open settings with the ⚙ button (top right), and pick the interface and the
 input your guitar is plugged into. Watch the IN meter next to it: it should
 move when you play.
 
-## Using the trainer
+## Using free practice (notes)
 
 - **Key** knob: drag up/down, scroll, or click for a list.
 - **Scale** menu: click it for the list, sorted into groups (basic, modes,
@@ -121,8 +123,8 @@ across all decks:
 ## UI widgets
 
 The knobs, segmented buttons, switches, LED meter and fretboard are painted
-with plain egui in `crates/fretwise-ui/src/widgets.rs`; no image assets are
-bundled. Existing egui knob crates were considered but target newer egui
+with plain egui in `crates/fretwise-ui/src/widgets/`; only the icons and the
+logo are bundled, as SVG. Existing egui knob crates were considered but target newer egui
 than the 0.31 this workspace pins (to match `nih_plug_egui`): `egui_knob`
 0.6 needs egui 0.36, `armas-audio` 0.2 needs 0.33.
 
@@ -141,8 +143,9 @@ in and drawn by `egui_extras`' SVG loader (resvg), as is the logo
 
 ### ASIO (optional)
 
-WASAPI is the default. This app only listens and doesn't play audio back, so
-the interface's direct monitoring handles what you hear. Most of the display
+WASAPI is the default. This app doesn't pass your guitar through (it only
+plays a short chime on the default output), so the interface's direct
+monitoring handles what you hear. Most of the display
 delay comes from the pitch-detection window (~15–30 ms), so ASIO doesn't change
 much yet. To build with ASIO anyway (needs LLVM installed; cpal's build script
 downloads the Steinberg ASIO SDK unless `CPAL_ASIO_DIR` points at one):
@@ -154,17 +157,30 @@ cargo run --release -p fretwise-app --features asio
 ## Architecture
 
 ```
-fretwise-core   no I/O, no GUI
+fretwise-core   no audio I/O, no GUI
   theory        notes, tunings, positions
-  pitch         YIN pitch detector, allocation-free
+  pitch         YIN pitch detector, allocation-free          <- audio thread
+  fft, poly     FFT and polyphonic (chord) detector          <- audio thread
   analyzer      Analyzer::push(sample) -> SharedPitch (atomics)  <- audio thread
-  stabilizer    jittery readings -> "holding note X"             <- GUI thread
-  scale         scale registry, built from scales/*.json at compile time
-  trainer       challenges, judging, stats, weighted selection   <- GUI thread
+  chime         the correct-answer ding, allocation-free     <- audio thread
+  stabilizer    jittery readings -> "holding note X"         <- GUI thread
+  scale, chord, deck
+                registries built from scales/, chords/ and decks/*.json
+                (compiled in, plus user folders); registry has the shared loader
+  trainer       note trainer: challenges, judging, stats     <- GUI thread
+  fingering     which finger plays each spot of a pattern
+  chord         also the chord drill and ChordListener (strums, arpeggios)
+  srs, learn    SM-2 cards and the Learn trainer             <- GUI thread
 
 fretwise-ui     plain egui views: FretwiseUi::show(ui, PitchReading)
+  lib           state, saving, the frame loop
+  learn, notes, chords, tuner, stats, header, settings, browser
+                one module per screen; parts has what they share
+  widgets/      custom-painted fretboard, knob, controls, meters
+  theme, icons  colours, fonts, SVG icons
 
-fretwise-app    cpal input stream + eframe window (the only host-specific crate)
+fretwise-app    cpal input and chime output, eframe window, state.json
+                (the only host-specific crate)
 ```
 
 The seam is the same one a plugin uses: something owns the audio callback and

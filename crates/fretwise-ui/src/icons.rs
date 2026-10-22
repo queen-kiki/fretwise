@@ -1,5 +1,5 @@
 //! The SVG graphics, drawn straight from the files in `assets/` by
-//! egui_extras' resvg loader: the Lucide icons (https://lucide.dev, ISC
+//! egui_extras' resvg loader: the Lucide icons (<https://lucide.dev>, ISC
 //! licence; see assets/icons/Lucide-LICENSE.txt) and the Fretwise logo.
 //! The files are compiled in, so a plugin build needs nothing on disk.
 
