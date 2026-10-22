@@ -173,7 +173,7 @@ impl FretwiseUi {
             ..defaults
         };
         let mut cfg = state.trainer;
-        cfg.max_fret = cfg.max_fret.min(15);
+        cfg.max_fret = cfg.max_fret.min(NECK_FRETS);
         cfg.min_fret = cfg.min_fret.min(cfg.max_fret);
         ui.trainer.tuning = ui.tuning;
         ui.trainer.config = cfg;
@@ -182,7 +182,7 @@ impl FretwiseUi {
         ui.chord_trainer.config = state.chords;
         ui.chord_trainer.set_progress(state.chord_progress);
         let mut learn_cfg = state.learn;
-        learn_cfg.max_fret = learn_cfg.max_fret.min(15);
+        learn_cfg.max_fret = learn_cfg.max_fret.min(NECK_FRETS);
         learn_cfg.min_fret = learn_cfg.min_fret.min(learn_cfg.max_fret);
         ui.learn_trainer.tuning = ui.tuning;
         ui.learn_trainer.config = learn_cfg;
@@ -718,12 +718,7 @@ impl FretwiseUi {
     fn trainer_tab(&mut self, ui: &mut egui::Ui, now: f64) {
         let before = self.trainer.config;
         egui::TopBottomPanel::bottom("trainer_rack")
-            .frame(
-                egui::Frame::new()
-                    .fill(rack_fill(ui))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .corner_radius(8),
-            )
+            .frame(rack_frame(ui))
             .show_separator_line(false)
             .show_inside(ui, |ui| self.trainer_rack(ui, now));
         egui::CentralPanel::default()
@@ -754,29 +749,13 @@ impl FretwiseUi {
             if scale.kind.is_chromatic() {
                 positions.retain(|&pos| interval(pos) == 0);
             }
-            // Small and unlabelled, so the shape reads at a glance: a bright
-            // tonic, a slightly bigger 5th, the rest smallest.
             let (root_fill, other_fill) = pattern_fills(visuals);
             for pos in positions {
-                let (color, size) = match interval(pos) {
-                    0 => (root_fill, 0.55),
-                    7 => (other_fill, 0.42),
-                    _ => (other_fill, 0.32),
-                };
-                markers.push(Marker { pos, color, size, ring: false, label: None, text: Color32::BLACK });
+                markers.push(pattern_dot(pos, interval(pos), root_fill, other_fill));
             }
         }
         if let Some(h) = held {
-            for pos in self.tuning.positions_of(h.note, 15) {
-                markers.push(Marker {
-                    pos,
-                    color: HEARD,
-                    size: 0.42,
-                    ring: false,
-                    label: None,
-                    text: Color32::BLACK,
-                });
-            }
+            markers.extend(self.tuning.positions_of(h.note, NECK_FRETS).into_iter().map(heard_dot));
         }
         if let Some(ch) = ch {
             let resolved = self.trainer.is_resolved();
@@ -785,22 +764,16 @@ impl FretwiseUi {
                 markers.push(target_marker(&markers, ch.position, self.target_finger(), color));
             }
         }
-        // Neck and terminal sit centred between header and rack; the
-        // terminal's height is last frame's, measured below.
         let terminal_id = ui.id().with("terminal_height");
-        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
-        let gap = 8.0;
-        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
-        let spare = ui.available_height() - height - gap - terminal_h;
-        ui.add_space((spare / 2.0).max(0.0));
+        let height = center_stage(ui, terminal_id);
         let cfg = &mut self.trainer.config;
         let controls = NeckControls {
             min_fret: &mut cfg.min_fret,
             max_fret: &mut cfg.max_fret,
             strings: Some(&mut cfg.strings),
         };
-        fretboard(ui, 15, height, &markers, Some(controls));
-        ui.add_space(gap);
+        fretboard(ui, NECK_FRETS, height, &markers, Some(controls));
+        ui.add_space(STAGE_GAP);
         let h = self.terminal(ui, now);
         ui.data_mut(|d| d.insert_temp(terminal_id, h));
     }
@@ -897,28 +870,7 @@ impl FretwiseUi {
             },
         }
 
-        egui::Frame::new()
-            .fill(syn.screen)
-            .stroke(egui::Stroke::new(1.0_f32, syn.border))
-            .corner_radius(8)
-            .inner_margin(egui::Margin::symmetric(18, 12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let line = ui.label(cmd).rect;
-                // A blinking block cursor after the command.
-                if (now * 1.6).fract() < 0.55 {
-                    let cursor = egui::Rect::from_min_size(
-                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
-                        egui::vec2(big.size * 0.55, line.height() - 4.0),
-                    );
-                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
-                }
-                ui.label(out);
-            })
-            .response
-            .rect
-            .height()
+        terminal_screen(ui, cmd, out, &big, now)
     }
 
     /// The everyday controls, laid out like a plug-in's front panel.
@@ -960,12 +912,7 @@ impl FretwiseUi {
     fn chords_tab(&mut self, ui: &mut egui::Ui, now: f64) {
         let before = self.chord_trainer.config;
         egui::TopBottomPanel::bottom("chords_rack")
-            .frame(
-                egui::Frame::new()
-                    .fill(rack_fill(ui))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .corner_radius(8),
-            )
+            .frame(rack_frame(ui))
             .show_separator_line(false)
             .show_inside(ui, |ui| self.chords_rack(ui, now));
         egui::CentralPanel::default()
@@ -989,14 +936,10 @@ impl FretwiseUi {
         }
 
         let terminal_id = ui.id().with("chord_terminal_height");
-        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
-        let gap = 8.0;
-        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
-        let spare = ui.available_height() - height - gap - terminal_h;
-        ui.add_space((spare / 2.0).max(0.0));
+        let height = center_stage(ui, terminal_id);
         // A chord shape is fixed: no fret range to drag, no strings to toggle.
-        fretboard(ui, 15, height, &markers, None);
-        ui.add_space(gap);
+        fretboard(ui, NECK_FRETS, height, &markers, None);
+        ui.add_space(STAGE_GAP);
         let h = self.chords_terminal(ui, now);
         ui.data_mut(|d| d.insert_temp(terminal_id, h));
     }
@@ -1040,48 +983,18 @@ impl FretwiseUi {
             None => match (self.chord_trainer.current(), self.chord_trainer.current_chord()) {
                 (Some(ch), Some(v)) if ch.heard_classes != 0 => {
                     token(o, "hearing ", &small, syn.comment);
-                    for pc in 0..12u8 {
-                        if (ch.heard_classes & (1 << pc)) != 0 {
-                            token(o, pitch_class_name(pc), &small, GOOD);
-                            token(o, " ", &small, syn.text);
-                        }
-                    }
+                    pitch_class_tokens(o, ch.heard_classes, &small, GOOD);
                     let missing = v.pitch_class_mask(self.tuning) & !ch.heard_classes;
                     if missing != 0 {
                         token(o, "· need ", &small, syn.comment);
-                        for pc in 0..12u8 {
-                            if (missing & (1 << pc)) != 0 {
-                                token(o, pitch_class_name(pc), &small, syn.note);
-                                token(o, " ", &small, syn.text);
-                            }
-                        }
+                        pitch_class_tokens(o, missing, &small, syn.note);
                     }
                 }
                 _ => token(o, "strum or arpeggiate the chord...", &small, syn.comment),
             },
         }
 
-        egui::Frame::new()
-            .fill(syn.screen)
-            .stroke(egui::Stroke::new(1.0_f32, syn.border))
-            .corner_radius(8)
-            .inner_margin(egui::Margin::symmetric(18, 12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let line = ui.label(cmd).rect;
-                if (now * 1.6).fract() < 0.55 {
-                    let cursor = egui::Rect::from_min_size(
-                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
-                        egui::vec2(big.size * 0.55, line.height() - 4.0),
-                    );
-                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
-                }
-                ui.label(out);
-            })
-            .response
-            .rect
-            .height()
+        terminal_screen(ui, cmd, out, &big, now)
     }
 
     fn chords_rack(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -1131,12 +1044,7 @@ impl FretwiseUi {
     fn learn_tab(&mut self, ui: &mut egui::Ui, now: f64) {
         let before = self.learn_trainer.config;
         egui::TopBottomPanel::bottom("learn_rack")
-            .frame(
-                egui::Frame::new()
-                    .fill(rack_fill(ui))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .corner_radius(8),
-            )
+            .frame(rack_frame(ui))
             .show_separator_line(false)
             .show_inside(ui, |ui| self.learn_rack(ui, now));
         egui::CentralPanel::default()
@@ -1173,41 +1081,13 @@ impl FretwiseUi {
                 let (root_fill, other_fill) = pattern_fills(&visuals);
                 for (idx, &pos) in sequence.iter().enumerate() {
                     if idx < step || resolved {
-                        markers.push(Marker {
-                            pos,
-                            color: GOOD,
-                            size: 0.48,
-                            ring: false,
-                            label: None,
-                            text: Color32::BLACK,
-                        });
+                        markers.push(Marker::dot(pos, GOOD, 0.48));
                     } else if show_guide {
-                        let (color, size) = match interval(pos) {
-                            0 => (root_fill, 0.55),
-                            7 => (other_fill, 0.42),
-                            _ => (other_fill, 0.32),
-                        };
-                        markers.push(Marker {
-                            pos,
-                            color,
-                            size,
-                            ring: false,
-                            label: None,
-                            text: Color32::BLACK,
-                        });
+                        markers.push(pattern_dot(pos, interval(pos), root_fill, other_fill));
                     }
                 }
                 if let Some(h) = held {
-                    for pos in self.tuning.positions_of(h.note, 15) {
-                        markers.push(Marker {
-                            pos,
-                            color: HEARD,
-                            size: 0.42,
-                            ring: false,
-                            label: None,
-                            text: Color32::BLACK,
-                        });
-                    }
+                    markers.extend(self.tuning.positions_of(h.note, NECK_FRETS).into_iter().map(heard_dot));
                 }
                 if show_guide {
                     if let Some(&target_pos) = sequence.get(step) {
@@ -1229,18 +1109,14 @@ impl FretwiseUi {
         }
 
         let terminal_id = ui.id().with("learn_terminal_height");
-        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
-        let gap = 8.0;
-        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
-        let spare = ui.available_height() - height - gap - terminal_h;
-        ui.add_space((spare / 2.0).max(0.0));
+        let height = center_stage(ui, terminal_id);
         if is_scale {
             let cfg = &mut self.learn_trainer.config;
             let controls = NeckControls { min_fret: &mut cfg.min_fret, max_fret: &mut cfg.max_fret, strings: None };
-            fretboard(ui, 15, height, &markers, Some(controls));
+            fretboard(ui, NECK_FRETS, height, &markers, Some(controls));
         } else {
             // A chord shape is fixed: no fret range to drag, no strings to toggle.
-            fretboard(ui, 15, height, &markers, None);
+            fretboard(ui, NECK_FRETS, height, &markers, None);
         }
         // A little burst of flag colours where the card was finished.
         if let Some((t0, positions)) = &self.sparkle {
@@ -1256,7 +1132,7 @@ impl FretwiseUi {
                 self.sparkle = None;
             }
         }
-        ui.add_space(gap);
+        ui.add_space(STAGE_GAP);
         let h = self.learn_terminal(ui, now);
         ui.data_mut(|d| d.insert_temp(terminal_id, h));
     }
@@ -1363,12 +1239,7 @@ impl FretwiseUi {
             None => match self.learn_trainer.current() {
                 Some(ActiveCard::Chord { heard_classes, .. }) if *heard_classes != 0 => {
                     token(o, "hearing ", &small, syn.comment);
-                    for pc in 0..12u8 {
-                        if (heard_classes & (1 << pc)) != 0 {
-                            token(o, pitch_class_name(pc), &small, GOOD);
-                            token(o, " ", &small, syn.text);
-                        }
-                    }
+                    pitch_class_tokens(o, *heard_classes, &small, GOOD);
                 }
                 Some(ActiveCard::Scale { sequence, step, .. }) => {
                     if let Some(&pos) = sequence.get(*step) {
@@ -1382,27 +1253,7 @@ impl FretwiseUi {
             },
         }
 
-        egui::Frame::new()
-            .fill(syn.screen)
-            .stroke(egui::Stroke::new(1.0_f32, syn.border))
-            .corner_radius(8)
-            .inner_margin(egui::Margin::symmetric(18, 12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let line = ui.label(cmd).rect;
-                if (now * 1.6).fract() < 0.55 {
-                    let cursor = egui::Rect::from_min_size(
-                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
-                        egui::vec2(big.size * 0.55, line.height() - 4.0),
-                    );
-                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
-                }
-                ui.label(out);
-            })
-            .response
-            .rect
-            .height()
+        terminal_screen(ui, cmd, out, &big, now)
     }
 
     fn learn_rack(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -1598,7 +1449,7 @@ impl FretwiseUi {
         ui.add_space(8.0);
         let mut markers = Vec::new();
         for string in 0..6 {
-            for fret in 0..=15u8 {
+            for fret in 0..=NECK_FRETS {
                 let pos = Position { string, fret };
                 if let Some(s) = self.trainer.stats(pos) {
                     let acc = s.accuracy() as f32;
@@ -1615,7 +1466,7 @@ impl FretwiseUi {
             }
         }
         let height = (ui.available_height() - 48.0).clamp(220.0, 360.0);
-        fretboard(ui, 15, height, &markers, None);
+        fretboard(ui, NECK_FRETS, height, &markers, None);
         ui.add_space(8.0);
         if plain_button(ui, "Reset progress", 14.0).clicked() {
             self.trainer.reset_stats();
@@ -1624,8 +1475,82 @@ impl FretwiseUi {
     }
 }
 
+/// Frets drawn on every neck, and the highest a practice range can reach.
+const NECK_FRETS: u8 = 15;
+
 /// Size of a dot that carries a finger number, in chords and scales alike.
 const FINGER_DOT: f32 = 0.8;
+
+/// Space between the neck and the terminal under it.
+const STAGE_GAP: f32 = 8.0;
+
+/// The faceplate the controls sit on at the bottom of a screen.
+fn rack_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::new().fill(rack_fill(ui)).inner_margin(egui::Margin::symmetric(16, 10)).corner_radius(8)
+}
+
+/// Centres the neck and the terminal under it between header and rack:
+/// adds the space above and returns the neck's height. The terminal's
+/// height is last frame's, stored under `terminal_id` after drawing it.
+fn center_stage(ui: &mut egui::Ui, terminal_id: egui::Id) -> f32 {
+    let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
+    let height = (ui.available_height() - terminal_h - STAGE_GAP - 12.0).clamp(220.0, 360.0);
+    let spare = ui.available_height() - height - STAGE_GAP - terminal_h;
+    ui.add_space((spare / 2.0).max(0.0));
+    height
+}
+
+/// The terminal under the neck: the command line `cmd` with a blinking
+/// block cursor, and the output line `out`. Returns the height it took.
+fn terminal_screen(ui: &mut egui::Ui, cmd: LayoutJob, out: LayoutJob, cmd_font: &egui::FontId, now: f64) -> f32 {
+    let syn = &theme::SYNTAX;
+    egui::Frame::new()
+        .fill(syn.screen)
+        .stroke(egui::Stroke::new(1.0_f32, syn.border))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::symmetric(18, 12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let line = ui.label(cmd).rect;
+            if (now * 1.6).fract() < 0.55 {
+                let cursor = egui::Rect::from_min_size(
+                    egui::pos2(line.right() + 4.0, line.top() + 2.0),
+                    egui::vec2(cmd_font.size * 0.55, line.height() - 4.0),
+                );
+                ui.painter().rect_filled(cursor, 0.0, syn.keyword);
+            }
+            ui.label(out);
+        })
+        .response
+        .rect
+        .height()
+}
+
+/// A dot of the scale pattern, small and unlabelled so the shape reads at a
+/// glance: a bright tonic, a slightly bigger 5th, the rest smallest.
+/// `interval` is semitones above the root.
+fn pattern_dot(pos: Position, interval: u8, root_fill: Color32, other_fill: Color32) -> Marker {
+    let (color, size) = match interval {
+        0 => (root_fill, 0.55),
+        7 => (other_fill, 0.42),
+        _ => (other_fill, 0.32),
+    };
+    Marker::dot(pos, color, size)
+}
+
+/// Where the note being played sits on the neck.
+fn heard_dot(pos: Position) -> Marker {
+    Marker::dot(pos, HEARD, 0.42)
+}
+
+/// The pitch classes set in `mask`, by name, each followed by a space.
+fn pitch_class_tokens(job: &mut LayoutJob, mask: u16, font: &egui::FontId, color: Color32) {
+    for pc in (0..12u8).filter(|pc| mask & (1 << pc) != 0) {
+        token(job, pitch_class_name(pc), font, color);
+        token(job, " ", font, theme::SYNTAX.text);
+    }
+}
 
 /// The note to play next: a blue dot with the finger number when the
 /// fingering is known (the same look as a chord shape), otherwise a ring

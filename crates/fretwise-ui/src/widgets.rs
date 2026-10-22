@@ -24,6 +24,13 @@ pub struct Marker {
     pub text: Color32,
 }
 
+impl Marker {
+    /// A plain filled dot with no label.
+    pub fn dot(pos: Position, color: Color32, size: f32) -> Self {
+        Self { pos, color, size, ring: false, label: None, text: Color32::BLACK }
+    }
+}
+
 /// The colour the controls light up in: the theme's selection colour, so
 /// knobs, buttons and the fret range match egui's own widgets.
 pub fn accent(ui: &Ui) -> Color32 {
