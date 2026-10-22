@@ -4,7 +4,7 @@
 //! The host's only job is to hand [`FretwiseUi::show`] the latest
 //! [`PitchReading`] each frame, plus anything it adds through [`Host`].
 
-mod lucide;
+mod icons;
 mod theme;
 mod widgets;
 
@@ -20,7 +20,7 @@ use fretwise_core::{
 use fretwise_core::ChordVoicing;
 use serde::{Deserialize, Serialize};
 
-use theme::{paint_flag, paint_pick, rack_fill, TRANS_BLUE, TRANS_PINK};
+use theme::{paint_flag, rack_fill, TRANS_BLUE, TRANS_PINK};
 use widgets::{
     dropdown, flame, fretboard, gear_button, icon_button, knob, level_meter, neck_point, plain_button, segmented,
     session_bar, skip_button, sparkles, toggle, tuner_gauge, Icon, Marker, NeckControls,
@@ -260,6 +260,7 @@ impl FretwiseUi {
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
         theme::apply(ui.ctx());
+        icons::install(ui.ctx());
         let theme = egui::ThemePreference::from(self.theme);
         if ui.ctx().options(|o| o.theme_preference) != theme {
             ui.ctx().set_theme(theme);
@@ -336,7 +337,7 @@ impl FretwiseUi {
                 paint_flag(ui.painter(), rect, 10.0);
                 ui.add_space(14.0);
                 let (pick, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
-                paint_pick(ui.painter(), pick);
+                icons::paint(ui.painter(), pick, &icons::LOGO, Color32::WHITE);
                 ui.add_space(4.0);
                 ui.label(RichText::new("Fretwise").size(30.0).strong());
                 ui.label(RichText::new("guitar fretboard trainer").weak());
@@ -527,7 +528,7 @@ impl FretwiseUi {
                 ui.set_width(ui.available_width().min(520.0));
                 ui.vertical_centered(|ui| {
                     let (pick, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
-                    paint_pick(ui.painter(), pick);
+                    icons::paint(ui.painter(), pick, &icons::LOGO, Color32::WHITE);
                     ui.add_space(12.0);
                     let mut title = LayoutJob::default();
                     token(&mut title, "all caught up ", &big, syn.text);

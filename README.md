@@ -134,9 +134,10 @@ License 1.1. Only the regular `Monocraft.ttf` is bundled, unmodified, in
 
 The icons (flame, eighth note, gauge, chart, settings, chevron, skip) are
 from **Lucide** (https://lucide.dev), ISC licence; the licence is in
-`crates/fretwise-ui/assets/icons/Lucide-LICENSE.txt`. egui draws them from
-point lists in `crates/fretwise-ui/src/lucide.rs`, generated from the SVGs
-by `tools/lucide_to_rust.py`.
+`crates/fretwise-ui/assets/icons/Lucide-LICENSE.txt`. Their SVG files sit
+unmodified next to it, taken from `lucide-static` 1.61.0, and are compiled
+in and drawn by `egui_extras`' SVG loader (resvg), as is the logo
+(`assets/logo/fretwise-logo.svg`) in the About window.
 
 ### ASIO (optional)
 

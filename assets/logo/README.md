@@ -15,7 +15,8 @@ it stands out on both the light and the dark theme. Hand-written SVG, no fonts.
 
 ## Files
 
-- `fretwise-logo.svg`: the icon mark (64×64 viewBox).
+- `fretwise-logo.svg`: the icon mark (64×64 viewBox). The app draws this
+  file itself (compiled in) on the About window and the "all caught up" card.
 - `fretwise-logo-{16,32,64,256,512}.png`: transparent PNG exports.
 - `fretwise.ico`: Windows icon with 16, 24, 32, 48, 64, 128 and 256 px.
 - `candidates/`: every round of the design, with `roundN-compare.html` pages

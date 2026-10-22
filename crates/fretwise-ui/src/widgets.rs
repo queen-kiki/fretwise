@@ -668,7 +668,7 @@ pub fn skip_button(ui: &mut Ui, size: f32) -> Response {
     let painter = ui.painter();
     painter.rect_filled(rect, 8.0, fill);
     let ink = ui.visuals().selection.stroke.color;
-    crate::lucide::paint(painter, rect.shrink(size * 0.27), crate::lucide::SKIP_FORWARD, ink);
+    crate::icons::paint(painter, rect.shrink(size * 0.27), &crate::icons::SKIP_FORWARD, ink);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -684,7 +684,7 @@ pub fn gear_button(ui: &mut Ui, on: bool) -> Response {
     } else {
         visuals.text_color()
     };
-    crate::lucide::paint(ui.painter(), rect, crate::lucide::SETTINGS, color);
+    crate::icons::paint(ui.painter(), rect, &crate::icons::SETTINGS, color);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -779,19 +779,19 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
         visuals.text_color()
     };
     let glyph = match icon {
-        Icon::Practice => crate::lucide::EIGHTH_NOTE,
-        Icon::Tuner => crate::lucide::GAUGE,
-        Icon::Stats => crate::lucide::CHART,
-        Icon::Back => crate::lucide::CHEVRON_LEFT,
+        Icon::Practice => &crate::icons::EIGHTH_NOTE,
+        Icon::Tuner => &crate::icons::GAUGE,
+        Icon::Stats => &crate::icons::CHART,
+        Icon::Back => &crate::icons::CHEVRON_LEFT,
     };
-    crate::lucide::paint(ui.painter(), rect, glyph, color);
+    crate::icons::paint(ui.painter(), rect, glyph, color);
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 /// The streak flame: Lucide's "flame" in pink, `h` points tall.
 pub fn flame(painter: &egui::Painter, c: egui::Pos2, h: f32) {
     let rect = Rect::from_center_size(c, vec2(h, h));
-    crate::lucide::paint(painter, rect, crate::lucide::FLAME, crate::theme::TRANS_PINK);
+    crate::icons::paint(painter, rect, &crate::icons::FLAME, crate::theme::TRANS_PINK);
 }
 
 /// Today's session as one bar: done over done + still to go, filled with
