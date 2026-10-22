@@ -1,0 +1,20 @@
+{
+  "id": "e5-power",
+  "name": "E5",
+  "frets": [
+    0,
+    2,
+    2,
+    null,
+    null,
+    null
+  ],
+  "fingers": [
+    0,
+    1,
+    2,
+    0,
+    0,
+    0
+  ]
+}

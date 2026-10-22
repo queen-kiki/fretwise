@@ -1,0 +1,18 @@
+{
+  "id": "jazz-session",
+  "name": "jazz session",
+  "group": "collections",
+  "order": 205,
+  "decks": [
+    "jazz-chords"
+  ],
+  "scales": [
+    "dorian",
+    "mixolydian",
+    "lydian",
+    "melodic-minor",
+    "diminished-half-whole",
+    "diminished-whole-half",
+    "whole-tone"
+  ]
+}

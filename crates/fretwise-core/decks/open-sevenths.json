@@ -1,0 +1,19 @@
+{
+  "id": "open-sevenths",
+  "name": "open 7th chords",
+  "group": "chords",
+  "order": 3,
+  "chords": [
+    "a7-open",
+    "d7-open",
+    "e7-open",
+    "g7-open",
+    "c7-open",
+    "b7-open",
+    "am7-open",
+    "em7-open",
+    "dm7-open",
+    "cmaj7-open",
+    "fmaj7-open"
+  ]
+}

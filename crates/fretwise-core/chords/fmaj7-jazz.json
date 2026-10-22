@@ -1,0 +1,20 @@
+{
+  "id": "fmaj7-jazz",
+  "name": "Fmaj7 (jazz)",
+  "frets": [
+    1,
+    null,
+    2,
+    2,
+    1,
+    null
+  ],
+  "fingers": [
+    1,
+    0,
+    3,
+    4,
+    2,
+    0
+  ]
+}

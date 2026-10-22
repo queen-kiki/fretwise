@@ -11,10 +11,9 @@ use egui::text::LayoutJob;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
-    fingering, format_interval, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordSetKind, ChordTrainer,
-    ChordTrainerConfig, Feedback, Grade, GuideMode, Labels, LearnConfig, LearnDeck, LearnFeedback, LearnProgress,
-    LearnTrainer, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer,
-    TrainerConfig, Tuning,
+    fingering, format_interval, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordTrainer, ChordTrainerConfig,
+    DeckKind, Feedback, Grade, GuideMode, Labels, LearnConfig, LearnFeedback, LearnProgress, LearnTrainer, Note,
+    NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -955,12 +954,14 @@ impl FretwiseUi {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
             let cfg = &mut self.chord_trainer.config;
-            rack_group(ui, "Curriculum", |ui| {
-                let groups: Vec<(&str, Vec<(ChordSetKind, &str)>)> = ChordSetKind::groups()
-                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+            rack_group(ui, "Deck", |ui| {
+                let raw = DeckKind::chord_groups();
+                let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = raw
+                    .iter()
+                    .map(|(group, kinds)| (*group, kinds.iter().map(|&k| (k, k.name())).collect()))
                     .collect();
-                let shown = cfg.set.name();
-                dropdown(ui, "chord_set", &mut cfg.set, shown, &groups, 210.0, 15.0);
+                let shown = cfg.deck.name();
+                dropdown(ui, "chord_deck", &mut cfg.deck, shown, &groups, 230.0, 15.0);
             });
             rack_group(ui, "Order", |ui| {
                 segmented(
@@ -1315,23 +1316,11 @@ impl FretwiseUi {
                 cfg.root = root as u8;
             }
             rack_group(ui, "Deck", |ui| {
-                segmented(
-                    ui,
-                    &mut cfg.deck,
-                    &[
-                        (LearnDeck::Both, "Both"),
-                        (LearnDeck::Scales, "Scales"),
-                        (LearnDeck::Chords, "Chords"),
-                    ],
-                    15.0,
-                );
-            });
-            rack_group(ui, "Chords", |ui| {
-                let groups: Vec<(&str, Vec<(ChordSetKind, &str)>)> = ChordSetKind::groups()
+                let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
                     .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
                     .collect();
-                let shown = cfg.chord_set.name();
-                dropdown(ui, "learn_chords", &mut cfg.chord_set, shown, &groups, 180.0, 15.0);
+                let shown = cfg.deck.name();
+                dropdown(ui, "learn_deck", &mut cfg.deck, shown, &groups, 230.0, 15.0);
             });
             rack_group(ui, "Guide", |ui| {
                 segmented(

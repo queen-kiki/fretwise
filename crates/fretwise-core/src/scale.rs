@@ -308,7 +308,7 @@ impl<'de> Deserialize<'de> for ScaleKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Scale {
     /// Pitch class of the root, 0 = C.

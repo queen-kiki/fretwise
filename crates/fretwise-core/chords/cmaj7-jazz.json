@@ -1,0 +1,20 @@
+{
+  "id": "cmaj7-jazz",
+  "name": "Cmaj7 (shell)",
+  "frets": [
+    null,
+    3,
+    2,
+    4,
+    3,
+    null
+  ],
+  "fingers": [
+    0,
+    2,
+    1,
+    4,
+    3,
+    0
+  ]
+}

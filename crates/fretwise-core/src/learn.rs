@@ -1,34 +1,21 @@
-//! "Learn" mode: Anki-style spaced repetition (SM-2) across scales (walked as
-//! a whole pattern from bottom to top) and chords.
+//! "Learn" mode: Anki-style spaced repetition (SM-2) over a selected [`DeckKind`].
 //!
-//! Each card is either a scale run (for the chosen key + fret range) or a
-//! chord voicing from the chosen curriculum. Cards are scheduled with SM-2
-//! intervals (`30s` → `2m` → `10m` → hours/days), auto-graded hands-free from
-//! speed and misses, and overridable with keys `1`–`4` (`Again`, `Hard`,
-//! `Good`, `Easy`) during the post-answer pause. Once a card matures
-//! ([`SrsCard::is_memorized`]), its fretboard diagram/pattern is hidden by
-//! default (`GuideMode::Auto`) so you recall the shape from memory.
+//! Each deck (`crates/fretwise-core/decks/*.json`) references individual scale
+//! cards (`scales/*.json`), individual chord cards (`chords/*.json`), and/or
+//! sub-decks. Cards are deduplicated when a collection combines overlapping
+//! decks, and SM-2 card state is stored per individual card key so progress is
+//! shared across every deck that includes that card.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::analyzer::PitchReading;
-use crate::chord::{ChordSetKind, ChordVoicing};
-use crate::scale::{Scale, ScaleKind};
+use crate::chord::{ChordKind, ChordVoicing};
+use crate::deck::DeckKind;
+use crate::scale::Scale;
 use crate::srs::{unix_seconds, Grade, SrsCard};
 use crate::theory::{nearest_note, Note, Position, Tuning};
-
-/// What the Learn deck quizzes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LearnDeck {
-    /// Both scales (in the chosen key/position) and chords from the chosen curriculum.
-    Both,
-    /// Only scale runs (one card per scale in the chosen key & fret range).
-    Scales,
-    /// Only chords from the chosen curriculum.
-    Chords,
-}
 
 /// Whether to show the scale pattern / chord diagram on the fretboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,14 +31,12 @@ pub enum GuideMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LearnConfig {
-    pub deck: LearnDeck,
-    /// Root pitch class (0 = C) for scale cards.
+    pub deck: DeckKind,
+    /// Root pitch class (0 = C) for scale cards in the deck.
     pub root: u8,
     /// Fret range for scale cards (e.g. `5..=8` for a single position box).
     pub min_fret: u8,
     pub max_fret: u8,
-    /// Which chord curriculum to include when `deck` is `Chords` or `Both`.
-    pub chord_set: ChordSetKind,
     /// Whether to show the scale pattern / chord diagram on the neck.
     pub guide: GuideMode,
 }
@@ -59,32 +44,28 @@ pub struct LearnConfig {
 impl Default for LearnConfig {
     fn default() -> Self {
         Self {
-            deck: LearnDeck::Both,
+            deck: DeckKind::default(),
             root: 9, // A
             min_fret: 5,
             max_fret: 8,
-            chord_set: ChordSetKind::default(),
             guide: GuideMode::Auto,
         }
     }
 }
 
-/// One Anki card in the active deck.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One individual Anki card in a deck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LearnCard {
     Scale(Scale),
-    /// Index into `config.chord_set.chords()`.
-    Chord(usize),
+    Chord(ChordKind),
 }
 
 impl LearnCard {
-    pub fn key(self, chord_set: ChordSetKind) -> String {
+    /// Stable storage key for this individual card, shared across all decks.
+    pub fn key(self) -> String {
         match self {
             LearnCard::Scale(s) => format!("scale:{}:{}", s.root % 12, s.kind.id()),
-            LearnCard::Chord(idx) => {
-                let id = chord_set.chords().get(idx).map_or("unknown", |c| c.id.as_str());
-                format!("chord:{id}")
-            }
+            LearnCard::Chord(c) => format!("chord:{}", c.id()),
         }
     }
 }
@@ -104,7 +85,7 @@ pub enum ActiveCard {
         misses: u32,
     },
     Chord {
-        index: usize,
+        chord: ChordKind,
         started: f64,
         heard_classes: u16,
         heard_strings: u8,
@@ -132,7 +113,7 @@ pub enum LearnFeedback {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LearnProgress {
-    /// Card key (`"scale:9:minor-pentatonic"` or `"chord:em-open"`) -> SM-2 card state.
+    /// Individual card key (`"scale:9:minor-pentatonic"` or `"chord:em-open"`) -> SM-2 state.
     pub cards: HashMap<String, SrsCard>,
     pub reviewed: u32,
     pub streak: u32,
@@ -194,7 +175,7 @@ impl LearnTrainer {
 
     pub fn current_chord(&self) -> Option<&'static ChordVoicing> {
         match self.current {
-            Some(ActiveCard::Chord { index, .. }) => self.config.chord_set.chords().get(index),
+            Some(ActiveCard::Chord { chord, .. }) => Some(chord.voicing()),
             _ => None,
         }
     }
@@ -228,8 +209,8 @@ impl LearnTrainer {
 
     pub fn current_key(&self) -> Option<String> {
         match &self.current {
-            Some(ActiveCard::Scale { scale, .. }) => Some(LearnCard::Scale(*scale).key(self.config.chord_set)),
-            Some(ActiveCard::Chord { index, .. }) => Some(LearnCard::Chord(*index).key(self.config.chord_set)),
+            Some(ActiveCard::Scale { scale, .. }) => Some(LearnCard::Scale(*scale).key()),
+            Some(ActiveCard::Chord { chord, .. }) => Some(LearnCard::Chord(*chord).key()),
             None => None,
         }
     }
@@ -257,24 +238,20 @@ impl LearnTrainer {
         self.best_streak = 0;
     }
 
-    /// All cards in the active deck.
+    /// All deduplicated cards in the active deck.
     pub fn deck_cards(&self) -> Vec<LearnCard> {
         let mut out = Vec::new();
-        if matches!(self.config.deck, LearnDeck::Both | LearnDeck::Scales) {
-            for kind in ScaleKind::all() {
-                if kind.is_chromatic() {
-                    continue;
-                }
-                let scale = Scale { root: self.config.root % 12, kind };
-                if !self.scale_sequence(scale).1.is_empty() {
-                    out.push(LearnCard::Scale(scale));
-                }
+        for &kind in self.config.deck.scales() {
+            if kind.is_chromatic() {
+                continue;
+            }
+            let scale = Scale { root: self.config.root % 12, kind };
+            if !self.scale_sequence(scale).1.is_empty() {
+                out.push(LearnCard::Scale(scale));
             }
         }
-        if matches!(self.config.deck, LearnDeck::Both | LearnDeck::Chords) {
-            for idx in 0..self.config.chord_set.chords().len() {
-                out.push(LearnCard::Chord(idx));
-            }
+        for &chord in self.config.deck.chords() {
+            out.push(LearnCard::Chord(chord));
         }
         out
     }
@@ -284,7 +261,7 @@ impl LearnTrainer {
         let unix_now = unix_seconds(now);
         let (mut due, mut new_cards, mut memorized) = (0, 0, 0);
         for card in self.deck_cards() {
-            let srs = self.card_state(&card.key(self.config.chord_set));
+            let srs = self.card_state(&card.key());
             if srs.due == 0.0 {
                 new_cards += 1;
             } else if srs.is_due(unix_now) {
@@ -323,10 +300,8 @@ impl LearnTrainer {
     pub fn next(&mut self, now: f64) {
         let prev_key = self.current_key();
         if self.advance_at.take().is_some() {
-            if let Some(ActiveCard::Chord { index, .. }) = self.current {
-                if let Some(v) = self.config.chord_set.chords().get(index) {
-                    self.ringing_mask = v.pitch_class_mask(self.tuning);
-                }
+            if let Some(ActiveCard::Chord { chord, .. }) = self.current {
+                self.ringing_mask = chord.voicing().pitch_class_mask(self.tuning);
             }
         }
         self.poly_since = [None; 12];
@@ -334,7 +309,7 @@ impl LearnTrainer {
 
         let mut pool = self.deck_cards();
         if pool.len() > 1 {
-            pool.retain(|c| Some(c.key(self.config.chord_set)) != prev_key);
+            pool.retain(|c| Some(c.key()) != prev_key);
         }
         if pool.is_empty() {
             self.current = None;
@@ -344,7 +319,7 @@ impl LearnTrainer {
         let unix_now = unix_seconds(now);
         let weights: Vec<f64> = pool
             .iter()
-            .map(|c| self.card_state(&c.key(self.config.chord_set)).weight(unix_now))
+            .map(|c| self.card_state(&c.key()).weight(unix_now))
             .collect();
         let total: f64 = weights.iter().sum();
         let mut pick = self.next_f64() * total;
@@ -369,8 +344,8 @@ impl LearnTrainer {
                     misses: 0,
                 }
             }
-            LearnCard::Chord(index) => ActiveCard::Chord {
-                index,
+            LearnCard::Chord(chord) => ActiveCard::Chord {
+                chord,
                 started: now,
                 heard_classes: 0,
                 heard_strings: 0,
@@ -395,9 +370,7 @@ impl LearnTrainer {
     pub fn current_title(&self) -> Option<String> {
         match &self.current {
             Some(ActiveCard::Scale { scale, .. }) => Some(scale.name()),
-            Some(ActiveCard::Chord { index, .. }) => {
-                self.config.chord_set.chords().get(*index).map(|v| format!("{} chord", v.name))
-            }
+            Some(ActiveCard::Chord { chord, .. }) => Some(format!("{} chord", chord.name())),
             None => None,
         }
     }
@@ -454,7 +427,7 @@ impl LearnTrainer {
                 let per_note = seconds / sequence.len().max(1) as f64;
                 let grade = Grade::for_note(per_note, *misses);
                 let title = scale.name();
-                let key = LearnCard::Scale(*scale).key(self.config.chord_set);
+                let key = LearnCard::Scale(*scale).key();
                 self.finish_card(key, title, seconds, grade, now);
             }
         } else {
@@ -465,12 +438,10 @@ impl LearnTrainer {
     }
 
     fn update_chord(&mut self, now: f64, reading: &PitchReading, mono: Option<Note>, a4: f32) {
-        let Some(ActiveCard::Chord { index, started, .. }) = self.current else {
+        let Some(ActiveCard::Chord { chord, started, .. }) = self.current else {
             return;
         };
-        let Some(voicing) = self.config.chord_set.chords().get(index) else {
-            return;
-        };
+        let voicing = chord.voicing();
         let target_mask = voicing.pitch_class_mask(self.tuning);
 
         let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
@@ -558,7 +529,7 @@ impl LearnTrainer {
         if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
             let seconds = (now - started).max(0.1);
             let grade = Grade::for_chord(seconds);
-            let key = LearnCard::Chord(index).key(self.config.chord_set);
+            let key = LearnCard::Chord(chord).key();
             let title = format!("{} chord", voicing.name);
             self.finish_card(key, title, seconds, grade, now);
         }
@@ -636,7 +607,7 @@ mod tests {
     #[test]
     fn walks_a_scale_card_and_schedules_it_with_sm2() {
         let cfg = LearnConfig {
-            deck: LearnDeck::Scales,
+            deck: DeckKind::by_id("basic-scales").unwrap(),
             root: 9,
             min_fret: 5,
             max_fret: 8,
@@ -666,5 +637,18 @@ mod tests {
         // Override grade with Hard (key 2).
         assert!(t.regrade(Grade::Hard, now));
         assert_eq!(t.card_state(&key).interval, 60.0);
+    }
+
+    #[test]
+    fn shared_card_progress_carries_across_overlapping_decks() {
+        let mut t = LearnTrainer::new(Tuning::STANDARD, LearnConfig::default(), 7);
+        t.cards.insert("chord:em-open".into(), SrsCard::default().review(Grade::Easy, 1000.0));
+        t.cards.get_mut("chord:em-open").unwrap().reps = 3;
+
+        t.config.deck = DeckKind::by_id("basic-chords").unwrap();
+        assert_eq!(t.deck_counts(1010.0).2, 1); // 1 memorized in basic-chords
+
+        t.config.deck = DeckKind::by_id("campfire-acoustic").unwrap();
+        assert_eq!(t.deck_counts(1010.0).2, 1); // same card is memorized in campfire-acoustic
     }
 }

@@ -1,0 +1,11 @@
+{
+  "id": "campfire-acoustic",
+  "name": "campfire acoustic",
+  "group": "collections",
+  "order": 202,
+  "decks": [
+    "basic-chords",
+    "suspended-add9",
+    "open-sevenths"
+  ]
+}

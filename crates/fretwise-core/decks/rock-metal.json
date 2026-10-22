@@ -1,0 +1,18 @@
+{
+  "id": "rock-metal",
+  "name": "rock & metal",
+  "group": "collections",
+  "order": 204,
+  "decks": [
+    "power-chords",
+    "barre-chords"
+  ],
+  "scales": [
+    "minor-pentatonic",
+    "blues",
+    "natural-minor",
+    "harmonic-minor",
+    "phrygian",
+    "phrygian-dominant"
+  ]
+}

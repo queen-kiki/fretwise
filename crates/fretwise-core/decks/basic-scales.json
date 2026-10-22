@@ -1,0 +1,13 @@
+{
+  "id": "basic-scales",
+  "name": "basic scales",
+  "group": "scales",
+  "order": 102,
+  "scales": [
+    "major",
+    "natural-minor",
+    "major-pentatonic",
+    "minor-pentatonic",
+    "blues"
+  ]
+}

@@ -83,25 +83,17 @@ skipped, with the reason printed to the console.
 - `degrees` (optional): one name per interval, spelled with `b` and `#`. Without
   it, degrees fall back to 1 b2 2 b3 3 4 b5 5 b6 6 b7 7.
 
-## Adding a chord curriculum
+## Adding chords and decks
 
-Chord sets live in `crates/fretwise-core/chords/` (compiled in) and
+Individual chord cards live in `crates/fretwise-core/chords/` (compiled in) and
 `%APPDATA%\Fretwise\chords\` (loaded at startup):
 
 ```json
 {
-  "id": "beginner-minor",
-  "name": "Em & Am",
-  "group": "beginner",
-  "order": 1,
-  "chords": [
-    {
-      "id": "em-open",
-      "name": "Em",
-      "frets": [0, 2, 2, 0, 0, 0],
-      "fingers": [0, 2, 3, 0, 0, 0]
-    }
-  ]
+  "id": "em-open",
+  "name": "Em",
+  "frets": [0, 2, 2, 0, 0, 0],
+  "fingers": [0, 2, 3, 0, 0, 0]
 }
 ```
 
@@ -109,6 +101,22 @@ Chord sets live in `crates/fretwise-core/chords/` (compiled in) and
   muted string, `0` is open, `1..=15` is a fret.
 - `fingers` (optional): `0` for muted/open, `1` (index) to `4` (pinky).
 - `barre` (optional): fret barred by the index finger.
+
+Decks live in `crates/fretwise-core/decks/` and `%APPDATA%\Fretwise\decks\` and
+reference scale ids, chord ids, and/or sub-deck ids. When a deck combines
+overlapping sub-decks, each card is included once and shares its SM-2 progress
+across all decks:
+
+```json
+{
+  "id": "rock-metal",
+  "name": "rock & metal",
+  "group": "collections",
+  "order": 204,
+  "decks": ["power-chords", "barre-chords"],
+  "scales": ["minor-pentatonic", "blues", "natural-minor", "harmonic-minor", "phrygian", "phrygian-dominant"]
+}
+```
 
 ## UI widgets
 

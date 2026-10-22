@@ -1,0 +1,15 @@
+{
+  "id": "diatonic-modes",
+  "name": "diatonic modes",
+  "group": "scales",
+  "order": 104,
+  "scales": [
+    "ionian",
+    "dorian",
+    "phrygian",
+    "lydian",
+    "mixolydian",
+    "aeolian",
+    "locrian"
+  ]
+}

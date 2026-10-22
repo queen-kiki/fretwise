@@ -1,0 +1,23 @@
+{
+  "id": "blues-session",
+  "name": "blues session",
+  "group": "collections",
+  "order": 203,
+  "scales": [
+    "minor-pentatonic",
+    "major-pentatonic",
+    "blues",
+    "mixolydian",
+    "dorian"
+  ],
+  "chords": [
+    "e7-open",
+    "a7-open",
+    "d7-open",
+    "g7-open",
+    "c7-open",
+    "b7-open",
+    "am7-open",
+    "em7-open"
+  ]
+}

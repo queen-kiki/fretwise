@@ -9,6 +9,7 @@
 pub mod analyzer;
 pub mod chime;
 pub mod chord;
+pub mod deck;
 pub mod fft;
 pub mod fingering;
 pub mod learn;
@@ -23,13 +24,12 @@ pub mod trainer;
 pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use chime::Chime;
 pub use chord::{
-    ChordChallenge, ChordFeedback, ChordOrder, ChordProgress, ChordSetDef, ChordSetKind, ChordTrainer,
-    ChordTrainerConfig, ChordVoicing,
+    ChordChallenge, ChordFeedback, ChordKind, ChordOrder, ChordProgress, ChordTrainer, ChordTrainerConfig,
+    ChordVoicing,
 };
+pub use deck::{DeckDef, DeckKind};
 pub use fingering::fingering;
-pub use learn::{
-    ActiveCard, GuideMode, LearnCard, LearnConfig, LearnDeck, LearnFeedback, LearnProgress, LearnTrainer,
-};
+pub use learn::{ActiveCard, GuideMode, LearnCard, LearnConfig, LearnFeedback, LearnProgress, LearnTrainer};
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};
 pub use srs::{format_interval, Grade, SrsCard};

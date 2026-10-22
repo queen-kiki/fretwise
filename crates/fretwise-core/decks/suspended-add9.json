@@ -1,0 +1,14 @@
+{
+  "id": "suspended-add9",
+  "name": "sus & add9 chords",
+  "group": "chords",
+  "order": 4,
+  "chords": [
+    "asus2-open",
+    "asus4-open",
+    "dsus2-open",
+    "dsus4-open",
+    "esus4-open",
+    "cadd9-open"
+  ]
+}

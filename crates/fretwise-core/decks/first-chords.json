@@ -1,0 +1,13 @@
+{
+  "id": "first-chords",
+  "name": "first chords (Em Am E A D)",
+  "group": "chords",
+  "order": 1,
+  "chords": [
+    "em-open",
+    "am-open",
+    "e-open",
+    "a-open",
+    "d-open"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "pentatonic-blues",
+  "name": "pentatonic & blues",
+  "group": "scales",
+  "order": 101,
+  "scales": [
+    "minor-pentatonic",
+    "major-pentatonic",
+    "blues"
+  ]
+}

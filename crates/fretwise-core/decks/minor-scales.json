@@ -1,0 +1,14 @@
+{
+  "id": "minor-scales",
+  "name": "minor family",
+  "group": "scales",
+  "order": 103,
+  "scales": [
+    "natural-minor",
+    "harmonic-minor",
+    "melodic-minor",
+    "minor-pentatonic",
+    "blues",
+    "dorian"
+  ]
+}

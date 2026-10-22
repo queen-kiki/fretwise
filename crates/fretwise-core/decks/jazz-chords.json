@@ -1,0 +1,21 @@
+{
+  "id": "jazz-chords",
+  "name": "jazz chords",
+  "group": "chords",
+  "order": 9,
+  "chords": [
+    "gmaj7-jazz",
+    "cmaj7-jazz",
+    "fmaj7-jazz",
+    "am7-jazz",
+    "dm7-jazz",
+    "g7-jazz",
+    "c9-jazz",
+    "d9-jazz",
+    "e7sharp9-jazz",
+    "bm7b5-jazz",
+    "fsharp-m7b5",
+    "g13-jazz",
+    "a6-jazz"
+  ]
+}

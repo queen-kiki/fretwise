@@ -1,0 +1,18 @@
+{
+  "id": "everything",
+  "name": "everything",
+  "group": "collections",
+  "order": 299,
+  "decks": [
+    "basic-chords",
+    "open-sevenths",
+    "suspended-add9",
+    "power-chords",
+    "barre-chords",
+    "jazz-chords",
+    "basic-scales",
+    "minor-scales",
+    "diatonic-modes",
+    "exotic-scales"
+  ]
+}

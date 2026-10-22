@@ -1,0 +1,21 @@
+{
+  "id": "c-barre",
+  "name": "C (barre)",
+  "frets": [
+    null,
+    3,
+    5,
+    5,
+    5,
+    3
+  ],
+  "fingers": [
+    0,
+    1,
+    3,
+    3,
+    3,
+    1
+  ],
+  "barre": 3
+}

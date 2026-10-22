@@ -1,0 +1,10 @@
+{
+  "id": "beginner-essentials",
+  "name": "beginner essentials",
+  "group": "collections",
+  "order": 201,
+  "decks": [
+    "basic-chords",
+    "pentatonic-blues"
+  ]
+}

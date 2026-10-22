@@ -1,0 +1,15 @@
+{
+  "id": "exotic-scales",
+  "name": "exotic scales",
+  "group": "scales",
+  "order": 105,
+  "scales": [
+    "phrygian-dominant",
+    "hungarian-minor",
+    "double-harmonic",
+    "hirajoshi",
+    "whole-tone",
+    "diminished-whole-half",
+    "diminished-half-whole"
+  ]
+}

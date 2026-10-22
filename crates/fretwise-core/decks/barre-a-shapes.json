@@ -1,0 +1,14 @@
+{
+  "id": "barre-a-shapes",
+  "name": "A-shape barre chords",
+  "group": "chords",
+  "order": 7,
+  "chords": [
+    "bm-barre",
+    "b-barre",
+    "cm-barre",
+    "c-barre",
+    "dm-barre",
+    "d-barre"
+  ]
+}

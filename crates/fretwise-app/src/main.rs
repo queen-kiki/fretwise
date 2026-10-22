@@ -198,15 +198,19 @@ impl Drop for App {
 }
 
 fn main() -> eframe::Result<()> {
-    // Scales and chord sets first: loading the saved state looks them up by id.
-    // Extra files can go in %APPDATA%\Fretwise\scales\ and %APPDATA%\Fretwise\chords\.
+    // Scales, chords, and decks first: loading the saved state looks them up by id.
+    // Extra files can go in %APPDATA%\Fretwise\{scales,chords,decks}\.
     let user_scales = dirs::config_dir().map(|d| d.join("Fretwise").join("scales"));
     for e in fretwise_core::scale::init(user_scales.as_deref()) {
         eprintln!("skipping scale {e}");
     }
     let user_chords = dirs::config_dir().map(|d| d.join("Fretwise").join("chords"));
     for e in fretwise_core::chord::init(user_chords.as_deref()) {
-        eprintln!("skipping chord set {e}");
+        eprintln!("skipping chord {e}");
+    }
+    let user_decks = dirs::config_dir().map(|d| d.join("Fretwise").join("decks"));
+    for e in fretwise_core::deck::init(user_decks.as_deref()) {
+        eprintln!("skipping deck {e}");
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

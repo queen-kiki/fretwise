@@ -1,48 +1,36 @@
-//! Chords and chord curricula, loaded from JSON files just like scales.
+//! Individual chord cards (`crates/fretwise-core/chords/*.json`) and the chord
+//! trainer.
 //!
-//! Each curriculum file in `crates/fretwise-core/chords/` (or the user's
-//! `%APPDATA%\Fretwise\chords\`) defines a lesson group of chord voicings:
+//! Each chord voicing is stored as its own JSON file and referenced by id from
+//! decks (`crates/fretwise-core/decks/*.json`), so overlapping decks share the
+//! exact same chord card and stats:
 //!
 //! ```json
 //! {
-//!   "id": "beginner-minor",
-//!   "name": "Em & Am",
-//!   "group": "beginner",
-//!   "order": 1,
-//!   "chords": [
-//!     {
-//!       "id": "em-open",
-//!       "name": "Em",
-//!       "frets": [0, 2, 2, 0, 0, 0],
-//!       "fingers": [0, 2, 3, 0, 0, 0]
-//!     }
-//!   ]
+//!   "id": "em-open",
+//!   "name": "Em",
+//!   "frets": [0, 2, 2, 0, 0, 0],
+//!   "fingers": [0, 2, 3, 0, 0, 0]
 //! }
 //! ```
-//!
-//! - `frets`: 6 entries from string 6 (low E, index 0) to string 1 (high E,
-//!   index 5). `null` means the string is muted (`x`), `0` is open, `1..=15`
-//!   is a fretted note.
-//! - `fingers` (optional): 0 for muted/open, 1 (index) to 4 (pinky).
-//! - `barre` (optional): fret barred by the index finger.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::ops::Range;
 use std::path::Path;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::analyzer::PitchReading;
+use crate::deck::DeckKind;
 use crate::theory::{nearest_note, Note, Position, Tuning};
 use crate::trainer::PositionStats;
 
 const BUILTIN: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/builtin_chords.rs"));
 
-const DEFAULT_ID: &str = "open-chords";
+const DEFAULT_ID: &str = "em-open";
 
-/// One chord voicing in a curriculum.
+/// One chord voicing file (`chords/*.json`).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChordVoicing {
@@ -57,6 +45,12 @@ pub struct ChordVoicing {
 }
 
 impl ChordVoicing {
+    pub fn parse(source: &str, json: &str) -> Result<Self, String> {
+        let def: Self = serde_json::from_str(json).map_err(|e| format!("{source}: {e}"))?;
+        def.validate().map_err(|e| format!("{source}: {e}"))?;
+        Ok(def)
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.id.trim().is_empty() {
             return Err("a chord \"id\" is empty".into());
@@ -99,88 +93,25 @@ impl ChordVoicing {
     }
 }
 
-/// One curriculum JSON file.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChordSetDef {
-    pub id: String,
-    pub name: String,
-    pub group: String,
-    #[serde(default = "default_order")]
-    pub order: i32,
-    pub chords: Vec<ChordVoicing>,
-}
-
-fn default_order() -> i32 {
-    1000
-}
-
-impl ChordSetDef {
-    pub fn parse(source: &str, json: &str) -> Result<Self, String> {
-        let def: Self = serde_json::from_str(json).map_err(|e| format!("{source}: {e}"))?;
-        def.validate().map_err(|e| format!("{source}: {e}"))?;
-        Ok(def)
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        for (field, value) in [("id", &self.id), ("name", &self.name), ("group", &self.group)] {
-            if value.trim().is_empty() {
-                return Err(format!("\"{field}\" is empty"));
-            }
-        }
-        if self.chords.is_empty() {
-            return Err("\"chords\" is empty".into());
-        }
-        let mut ids = HashSet::new();
-        for c in &self.chords {
-            c.validate()?;
-            if !ids.insert(c.id.as_str()) {
-                return Err(format!("duplicate chord id \"{}\" in set", c.id));
-            }
-        }
-        Ok(())
-    }
-}
-
 struct Registry {
-    entries: Vec<ChordSetDef>,
-    groups: Vec<(String, Range<usize>)>,
+    entries: Vec<ChordVoicing>,
 }
 
 impl Registry {
     fn build(sources: impl IntoIterator<Item = (String, String)>) -> (Self, Vec<String>) {
         let mut errors = Vec::new();
         let mut ids = HashSet::new();
-        let mut defs = Vec::new();
+        let mut entries = Vec::new();
         for (source, json) in sources {
-            match ChordSetDef::parse(&source, &json) {
+            match ChordVoicing::parse(&source, &json) {
                 Ok(def) if !ids.insert(def.id.clone()) => {
                     errors.push(format!("{source}: id \"{}\" is already taken; skipped", def.id))
                 }
-                Ok(def) => defs.push(def),
+                Ok(def) => entries.push(def),
                 Err(e) => errors.push(e),
             }
         }
-
-        let group_order = |group: &str, defs: &[ChordSetDef]| {
-            defs.iter().filter(|d| d.group == group).map(|d| d.order).min().unwrap_or(i32::MAX)
-        };
-        let keys: Vec<i32> = defs.iter().map(|d| group_order(&d.group, &defs)).collect();
-        let mut keyed: Vec<_> = keys.into_iter().zip(defs).collect();
-        keyed.sort_by(|(ga, a), (gb, b)| {
-            (ga, &a.group, a.order, &a.name, &a.id).cmp(&(gb, &b.group, b.order, &b.name, &b.id))
-        });
-
-        let mut entries = Vec::new();
-        let mut groups: Vec<(String, Range<usize>)> = Vec::new();
-        for (_, def) in keyed {
-            match groups.last_mut() {
-                Some((name, range)) if *name == def.group => range.end += 1,
-                _ => groups.push((def.group.clone(), entries.len()..entries.len() + 1)),
-            }
-            entries.push(def);
-        }
-        (Self { entries, groups }, errors)
+        (Self { entries }, errors)
     }
 
     fn builtin() -> (Self, Vec<String>) {
@@ -204,7 +135,7 @@ fn registry() -> &'static Registry {
     })
 }
 
-/// Loads built-in chord sets plus every `*.json` in `user_dir` (if it exists).
+/// Loads built-in chords plus every `*.json` in `user_dir` (if it exists).
 pub fn init(user_dir: Option<&Path>) -> Vec<String> {
     let mut sources: Vec<(String, String)> = builtin_sources().collect();
     let mut errors = Vec::new();
@@ -235,88 +166,74 @@ pub fn init(user_dir: Option<&Path>) -> Vec<String> {
     errors
 }
 
-/// Which chord curriculum set, out of those loaded. Saved by its id.
+/// Handle to one loaded chord voicing. Saved by its id.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChordSetKind(u16);
+pub struct ChordKind(u16);
 
-impl ChordSetKind {
+impl ChordKind {
     pub fn all() -> impl Iterator<Item = Self> {
         (0..registry().entries.len()).map(|i| Self(i as u16))
-    }
-
-    pub fn groups() -> impl Iterator<Item = (&'static str, impl Iterator<Item = Self>)> {
-        registry()
-            .groups
-            .iter()
-            .map(|(name, range)| (name.as_str(), range.clone().map(|i| Self(i as u16))))
     }
 
     pub fn by_id(id: &str) -> Option<Self> {
         registry().entries.iter().position(|e| e.id == id).map(|i| Self(i as u16))
     }
 
-    fn entry(self) -> &'static ChordSetDef {
+    pub fn voicing(self) -> &'static ChordVoicing {
         &registry().entries[self.0 as usize]
     }
 
     pub fn id(self) -> &'static str {
-        &self.entry().id
+        &self.voicing().id
     }
 
     pub fn name(self) -> &'static str {
-        &self.entry().name
-    }
-
-    pub fn group(self) -> &'static str {
-        &self.entry().group
-    }
-
-    pub fn chords(self) -> &'static [ChordVoicing] {
-        &self.entry().chords
+        &self.voicing().name
     }
 }
 
-impl Default for ChordSetKind {
+impl Default for ChordKind {
     fn default() -> Self {
         Self::by_id(DEFAULT_ID).unwrap_or(Self(0))
     }
 }
 
-impl fmt::Debug for ChordSetKind {
+impl fmt::Debug for ChordKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ChordSetKind({:?})", self.id())
+        write!(f, "ChordKind({:?})", self.id())
     }
 }
 
-impl Serialize for ChordSetKind {
+impl Serialize for ChordKind {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(self.id())
     }
 }
 
-impl<'de> Deserialize<'de> for ChordSetKind {
+impl<'de> Deserialize<'de> for ChordKind {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let id = String::deserialize(d)?;
         Ok(Self::by_id(&id).unwrap_or_else(|| {
-            eprintln!("unknown chord set \"{id}\"; using {DEFAULT_ID}");
+            eprintln!("unknown chord \"{id}\"; using {DEFAULT_ID}");
             Self::default()
         }))
     }
 }
 
-/// How the chord trainer walks through the set.
+/// How the chord trainer walks through the selected deck's chords.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChordOrder {
     /// Weighted towards chords you're slow on or miss.
     Random,
-    /// In curriculum order, looping.
+    /// In deck order, looping.
     InOrder,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChordTrainerConfig {
-    pub set: ChordSetKind,
+    #[serde(alias = "set")]
+    pub deck: DeckKind,
     pub order: ChordOrder,
     /// Show the chord's dots and finger numbers on the neck before it's played.
     pub show_diagram: bool,
@@ -325,7 +242,7 @@ pub struct ChordTrainerConfig {
 impl Default for ChordTrainerConfig {
     fn default() -> Self {
         Self {
-            set: ChordSetKind::default(),
+            deck: DeckKind::default_chord_deck(),
             order: ChordOrder::Random,
             show_diagram: true,
         }
@@ -334,8 +251,7 @@ impl Default for ChordTrainerConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChordChallenge {
-    /// Index into `config.set.chords()`.
-    pub index: usize,
+    pub chord: ChordKind,
     pub started: f64,
     /// Pitch classes (12-bit mask) heard so far during the current strum/arpeggio.
     pub heard_classes: u16,
@@ -366,9 +282,9 @@ const POLY_HOLD: f64 = 0.08;
 /// Minimum short-term input level (dBFS) to accept polyphonic chord notes.
 const CHORD_GATE_DB: f32 = -45.0;
 
-/// Chord trainer: asks for a chord from the active curriculum set and accepts
-/// either a full strum (via [`PitchReading::poly`]) or a slow strum / arpeggio
-/// where the chord's pitch classes arrive over ~1.4 seconds.
+/// Chord trainer: asks for a chord from the active deck and accepts either a
+/// full strum (via [`PitchReading::poly`]) or a slow strum / arpeggio where the
+/// chord's pitch classes arrive over ~1.4 seconds.
 pub struct ChordTrainer {
     pub config: ChordTrainerConfig,
     pub tuning: Tuning,
@@ -376,12 +292,8 @@ pub struct ChordTrainer {
     stats: HashMap<String, PositionStats>,
     feedback: Option<(ChordFeedback, f64)>,
     advance_at: Option<f64>,
-    /// When each pitch class started holding continuously in the poly detector.
     poly_since: [Option<f64>; 12],
-    /// Last time each pitch class (0..12) was confirmed (held for `POLY_HOLD` or via `NoteStabilizer`).
     class_seen_at: [f64; 12],
-    /// Pitch-class mask of the chord that just resolved, so a still-ringing
-    /// chord doesn't immediately count toward the next prompt until silence.
     ringing_mask: u16,
     last_voiced: f64,
     seq_step: usize,
@@ -417,8 +329,7 @@ impl ChordTrainer {
     }
 
     pub fn current_chord(&self) -> Option<&'static ChordVoicing> {
-        let ch = self.current?;
-        self.config.set.chords().get(ch.index)
+        Some(self.current?.chord.voicing())
     }
 
     pub fn feedback(&self) -> Option<(&ChordFeedback, f64)> {
@@ -457,52 +368,51 @@ impl ChordTrainer {
     }
 
     pub fn next(&mut self, now: f64) {
-        let prev = self.current.map(|c| c.index);
+        let prev = self.current.map(|c| c.chord);
         if self.advance_at.take().is_some() {
-            if let Some(idx) = prev {
-                if let Some(voicing) = self.config.set.chords().get(idx) {
-                    self.ringing_mask = voicing.pitch_class_mask(self.tuning);
-                }
+            if let Some(chord) = prev {
+                self.ringing_mask = chord.voicing().pitch_class_mask(self.tuning);
             }
         }
         self.poly_since = [None; 12];
         self.class_seen_at = [f64::NEG_INFINITY; 12];
-        let chords = self.config.set.chords();
+        let chords = self.config.deck.chords();
         if chords.is_empty() {
             self.current = None;
             return;
         }
-        let index = match self.config.order {
+        let chord = match self.config.order {
             ChordOrder::InOrder => {
-                let i = self.seq_step % chords.len();
+                let c = chords[self.seq_step % chords.len()];
                 self.seq_step += 1;
-                i
+                c
             }
-            ChordOrder::Random => self.pick_random(prev),
+            ChordOrder::Random => self.pick_random(chords, prev),
         };
         self.current = Some(ChordChallenge {
-            index,
+            chord,
             started: now,
             heard_classes: 0,
             heard_strings: 0,
         });
     }
 
-    fn pick_random(&mut self, prev: Option<usize>) -> usize {
-        let chords = self.config.set.chords();
-        let pool: Vec<usize> = (0..chords.len())
-            .filter(|&i| chords.len() == 1 || Some(i) != prev)
+    fn pick_random(&mut self, chords: &[ChordKind], prev: Option<ChordKind>) -> ChordKind {
+        let pool: Vec<ChordKind> = chords
+            .iter()
+            .copied()
+            .filter(|&c| chords.len() == 1 || Some(c) != prev)
             .collect();
-        let weights: Vec<f64> = pool.iter().map(|&i| self.weight(&chords[i].id)).collect();
+        let weights: Vec<f64> = pool.iter().map(|&c| self.weight(c.id())).collect();
         let total: f64 = weights.iter().sum();
         let mut pick = self.next_f64() * total;
-        for (&i, &w) in pool.iter().zip(&weights) {
+        for (&c, &w) in pool.iter().zip(&weights) {
             if pick < w {
-                return i;
+                return c;
             }
             pick -= w;
         }
-        *pool.last().unwrap_or(&0)
+        *pool.last().unwrap_or(&chords[0])
     }
 
     pub fn skip(&mut self, now: f64) {
@@ -532,8 +442,6 @@ impl ChordTrainer {
         let Some(voicing) = self.current_chord() else { return };
         let target_mask = voicing.pitch_class_mask(self.tuning);
 
-        // Gate on the short-term input level so decaying tail after stopping
-        // or quiet background noise can't feed the chord detector.
         let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
             reading
                 .poly
@@ -547,7 +455,6 @@ impl ChordTrainer {
             0
         };
 
-        // Require each poly pitch class to hold steady for `POLY_HOLD` before it counts.
         let mut frame_mask = 0u16;
         for pc in 0..12usize {
             if (raw_poly_mask & (1 << pc)) != 0 {
@@ -572,8 +479,6 @@ impl ChordTrainer {
             self.last_voiced = now;
         }
 
-        // Ignore the previous chord while it's still ringing out (unless the
-        // new chord has the same pitch classes).
         if self.ringing_mask != 0
             && frame_mask != 0
             && (frame_mask & !self.ringing_mask) == 0
@@ -591,7 +496,6 @@ impl ChordTrainer {
             }
         }
 
-        // Active pitch classes within the rolling strum window.
         let mut active_classes = 0u16;
         for (pc, &t) in self.class_seen_at.iter().enumerate() {
             if now - t <= STRUM_WINDOW {
@@ -599,7 +503,6 @@ impl ChordTrainer {
             }
         }
 
-        // Which strings of the voicing have had their pitch class heard.
         let mut heard_strings = 0u8;
         for (string, fret) in voicing.frets.iter().enumerate() {
             if let Some(fret) = *fret {
@@ -615,8 +518,6 @@ impl ChordTrainer {
             ch.heard_strings = heard_strings;
         }
 
-        // Require every pitch class of the chord to be present in the window,
-        // and no out-of-chord pitch classes in the current frame.
         let extra_in_frame = (frame_mask & !target_mask).count_ones();
         if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
             let started = self.current.map_or(now, |c| c.started);
@@ -654,21 +555,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_builtin_chord_set_loads() {
+    fn every_builtin_chord_loads() {
         let (registry, errors) = Registry::builtin();
         assert_eq!(errors, Vec::<String>::new());
         assert_eq!(registry.entries.len(), BUILTIN.len());
-        for id in ["beginner-minor", "beginner-major", "open-chords", "open-sevenths", "barre-e-shapes", "barre-a-shapes"] {
-            assert!(ChordSetKind::by_id(id).is_some(), "{id}");
+        for id in ["em-open", "am-open", "c-open", "g-open", "e5-power", "f-barre", "bm-barre"] {
+            assert!(ChordKind::by_id(id).is_some(), "{id}");
         }
-        let groups: Vec<&str> = ChordSetKind::groups().map(|(name, _)| name).collect();
-        assert_eq!(groups, ["beginner", "barre"]);
     }
 
     #[test]
     fn recognizes_strum_and_slow_arpeggio() {
         let cfg = ChordTrainerConfig {
-            set: ChordSetKind::by_id("beginner-minor").unwrap(),
+            deck: DeckKind::by_id("first-chords").unwrap(),
             order: ChordOrder::InOrder,
             show_diagram: true,
         };
@@ -682,7 +581,7 @@ mod tests {
             *slot = Note(midi).frequency(440.0);
         }
         t.update(0.4, &r, None, 440.0);
-        assert!(!t.is_resolved()); // single frame blip doesn't trigger
+        assert!(!t.is_resolved());
         t.update(0.5, &r, None, 440.0);
         assert!(t.is_resolved());
         assert_eq!(t.correct, 1);

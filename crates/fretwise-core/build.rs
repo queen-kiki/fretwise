@@ -30,4 +30,5 @@ fn embed_dir(folder: &str, out_file: &str) {
 fn main() {
     embed_dir("scales", "builtin_scales.rs");
     embed_dir("chords", "builtin_chords.rs");
+    embed_dir("decks", "builtin_decks.rs");
 }

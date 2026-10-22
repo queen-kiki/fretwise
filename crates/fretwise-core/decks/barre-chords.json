@@ -1,0 +1,10 @@
+{
+  "id": "barre-chords",
+  "name": "barre chords",
+  "group": "chords",
+  "order": 8,
+  "decks": [
+    "barre-e-shapes",
+    "barre-a-shapes"
+  ]
+}
