@@ -15,6 +15,7 @@ pub mod fingering;
 pub mod learn;
 pub mod pitch;
 pub mod poly;
+mod rng;
 pub mod scale;
 pub mod srs;
 pub mod stabilizer;

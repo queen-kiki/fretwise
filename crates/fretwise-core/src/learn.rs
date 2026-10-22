@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::analyzer::PitchReading;
 use crate::chord::{ChordKind, ChordVoicing};
 use crate::deck::DeckKind;
+use crate::rng::Rng;
 use crate::scale::{Scale, ScaleKind};
 use crate::srs::{unix_seconds, Grade, SrsCard};
 use crate::theory::{nearest_note, Note, Position, Tuning};
@@ -161,7 +162,7 @@ pub struct LearnTrainer {
     class_seen_at: [f64; 12],
     ringing_mask: u16,
     last_voiced: f64,
-    rng: u64,
+    rng: Rng,
     pub reviewed: u32,
     pub streak: u32,
     pub best_streak: u32,
@@ -183,7 +184,7 @@ impl LearnTrainer {
             class_seen_at: [f64::NEG_INFINITY; 12],
             ringing_mask: 0,
             last_voiced: f64::NEG_INFINITY,
-            rng: seed | 1,
+            rng: Rng::new(seed),
             reviewed: 0,
             streak: 0,
             best_streak: 0,
@@ -386,16 +387,7 @@ impl LearnTrainer {
             .iter()
             .map(|c| self.card_state(&c.key()).weight(unix_now))
             .collect();
-        let total: f64 = weights.iter().sum();
-        let mut pick = self.next_f64() * total;
-        let mut chosen = *pool.last().unwrap();
-        for (&card, &w) in pool.iter().zip(&weights) {
-            if pick < w {
-                chosen = card;
-                break;
-            }
-            pick -= w;
-        }
+        let chosen = pool[self.rng.pick_weighted(&weights).unwrap_or(pool.len() - 1)];
 
         let root = self.box_root();
         self.current = Some(match chosen {
@@ -656,14 +648,6 @@ impl LearnTrainer {
         candidates.sort_by_key(|&p| (tuning.note_at(p), p.fret));
         candidates.dedup_by_key(|p| tuning.note_at(*p));
         (box_positions, candidates)
-    }
-
-    fn next_f64(&mut self) -> f64 {
-        self.rng ^= self.rng >> 12;
-        self.rng ^= self.rng << 25;
-        self.rng ^= self.rng >> 27;
-        let x = self.rng.wrapping_mul(0x2545_f491_4f6c_dd1d);
-        (x >> 11) as f64 / (1u64 << 53) as f64
     }
 }
 

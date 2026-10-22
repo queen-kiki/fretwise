@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::rng::Rng;
 use crate::scale::Scale;
 use crate::theory::{Note, Position, Tuning};
 
@@ -165,7 +166,7 @@ pub struct Trainer {
     repick: Option<Note>,
     /// Steps taken through the pattern in [`Order::Ascending`]/[`Order::UpDown`].
     seq_step: usize,
-    rng: u64,
+    rng: Rng,
     pub streak: u32,
     pub best_streak: u32,
     pub correct: u32,
@@ -184,7 +185,7 @@ impl Trainer {
             last_judged: None,
             repick: None,
             seq_step: 0,
-            rng: seed | 1,
+            rng: Rng::new(seed),
             streak: 0,
             best_streak: 0,
             correct: 0,
@@ -314,15 +315,7 @@ impl Trainer {
             return None;
         }
         let weights: Vec<f64> = pool.iter().map(|&p| self.weight(p)).collect();
-        let total: f64 = weights.iter().sum();
-        let mut pick = self.next_f64() * total;
-        for (&p, &w) in pool.iter().zip(&weights) {
-            if pick < w {
-                return Some(p);
-            }
-            pick -= w;
-        }
-        pool.last().copied()
+        self.rng.pick_weighted(&weights).map(|i| pool[i])
     }
 
     fn pick_in_sequence(&mut self) -> Option<Position> {
@@ -404,15 +397,6 @@ impl Trainer {
             None => 3.0,
             Some(s) => 1.0 + 4.0 * (1.0 - s.accuracy()) + (s.avg_time() / 2.0).min(3.0),
         }
-    }
-
-    fn next_f64(&mut self) -> f64 {
-        // xorshift64*
-        self.rng ^= self.rng >> 12;
-        self.rng ^= self.rng << 25;
-        self.rng ^= self.rng >> 27;
-        let x = self.rng.wrapping_mul(0x2545_f491_4f6c_dd1d);
-        (x >> 11) as f64 / (1u64 << 53) as f64
     }
 }
 

@@ -23,6 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::analyzer::PitchReading;
 use crate::deck::DeckKind;
+use crate::rng::Rng;
 use crate::theory::{nearest_note, Note, Position, Tuning};
 use crate::trainer::PositionStats;
 
@@ -406,7 +407,7 @@ pub struct ChordTrainer {
     ringing_mask: u16,
     last_voiced: f64,
     seq_step: usize,
-    rng: u64,
+    rng: Rng,
     pub streak: u32,
     pub best_streak: u32,
     pub correct: u32,
@@ -426,7 +427,7 @@ impl ChordTrainer {
             ringing_mask: 0,
             last_voiced: f64::NEG_INFINITY,
             seq_step: 0,
-            rng: seed | 1,
+            rng: Rng::new(seed),
             streak: 0,
             best_streak: 0,
             correct: 0,
@@ -527,15 +528,7 @@ impl ChordTrainer {
             .filter(|&c| chords.len() == 1 || Some(c) != prev)
             .collect();
         let weights: Vec<f64> = pool.iter().map(|&c| self.weight(c.id())).collect();
-        let total: f64 = weights.iter().sum();
-        let mut pick = self.next_f64() * total;
-        for (&c, &w) in pool.iter().zip(&weights) {
-            if pick < w {
-                return c;
-            }
-            pick -= w;
-        }
-        *pool.last().unwrap_or(&chords[0])
+        self.rng.pick_weighted(&weights).map_or(chords[0], |i| pool[i])
     }
 
     pub fn skip(&mut self, now: f64) {
@@ -662,14 +655,6 @@ impl ChordTrainer {
             None => 3.0,
             Some(s) => 1.0 + (s.avg_time() / 2.0).min(3.0),
         }
-    }
-
-    fn next_f64(&mut self) -> f64 {
-        self.rng ^= self.rng >> 12;
-        self.rng ^= self.rng << 25;
-        self.rng ^= self.rng >> 27;
-        let x = self.rng.wrapping_mul(0x2545_f491_4f6c_dd1d);
-        (x >> 11) as f64 / (1u64 << 53) as f64
     }
 }
 
