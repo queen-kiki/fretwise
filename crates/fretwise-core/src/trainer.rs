@@ -86,6 +86,9 @@ pub struct Trainer {
     /// The note we last judged; it must change (or go silent) before we judge
     /// again, so one ringing note isn't counted twice.
     last_judged: Option<Note>,
+    /// The previous challenge's note, if it was answered correctly. Picking it
+    /// again during the next challenge is ignored rather than counted wrong.
+    repick: Option<Note>,
     rng: u64,
     pub streak: u32,
     pub best_streak: u32,
@@ -103,6 +106,7 @@ impl Trainer {
             feedback: None,
             advance_at: None,
             last_judged: None,
+            repick: None,
             rng: seed | 1,
             streak: 0,
             best_streak: 0,
@@ -157,8 +161,9 @@ impl Trainer {
 
     /// Pick the next challenge, favouring positions that are slow or missed.
     pub fn next(&mut self, now: f64) {
-        self.advance_at = None;
         let prev_note = self.current.map(|c| c.note);
+        // `advance_at` is only set after a correct answer.
+        self.repick = self.advance_at.take().and(prev_note);
         let mut pool = self.candidates();
         // Never repeat the note that may still be ringing.
         if pool.iter().any(|&p| Some(self.tuning.note_at(p)) != prev_note) {
@@ -220,6 +225,9 @@ impl Trainer {
         }
         self.last_judged = Some(note);
 
+        if self.repick == Some(note) && note != ch.note {
+            return;
+        }
         if note == ch.note {
             let seconds = now - ch.started;
             let s = self.stats.entry(ch.position).or_default();
@@ -283,6 +291,25 @@ mod tests {
         assert_ne!(next.note, target);
         // The still-ringing old note isn't held against the new prompt.
         assert_eq!(t.wrong, 0);
+    }
+
+    #[test]
+    fn repicking_previous_target_is_not_wrong() {
+        let mut t = trainer();
+        let first = t.current().unwrap().note;
+        t.update(1.0, Some(first));
+        t.update(2.0, None);
+        assert!(!t.is_resolved());
+        let target = t.current().unwrap().note;
+        // Pick the old note again, a couple of times.
+        t.update(2.5, Some(first));
+        t.update(2.6, None);
+        t.update(2.7, Some(first));
+        assert_eq!(t.wrong, 0);
+        assert_eq!(t.current().unwrap().misses, 0);
+        // Other wrong notes still count.
+        t.update(3.0, Some(Note(target.0.max(first.0) + 1)));
+        assert_eq!(t.wrong, 1);
     }
 
     #[test]
