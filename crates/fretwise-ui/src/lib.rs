@@ -15,7 +15,7 @@ use fretwise_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use theme::{paint_flag, rack_fill, TRANS_BLUE, TRANS_PINK};
+use theme::{paint_flag, paint_pick, rack_fill, TRANS_BLUE, TRANS_PINK};
 use widgets::{dropdown, fretboard, knob, level_meter, segmented, toggle, tuner_gauge, Marker, NeckControls};
 
 const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
@@ -257,6 +257,9 @@ impl FretwiseUi {
         });
         if modal.should_close() {
             self.about_open = false;
+                let (pick, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
+                paint_pick(ui.painter(), pick);
+                ui.add_space(4.0);
         }
     }
 

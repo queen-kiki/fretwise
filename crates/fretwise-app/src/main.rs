@@ -208,7 +208,11 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("Fretwise")
             .with_inner_size([1100.0, 680.0])
-            .with_min_inner_size([800.0, 560.0]),
+            .with_min_inner_size([800.0, 560.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/logo/fretwise-logo-256.png"))
+                    .expect("the bundled logo is a valid PNG"),
+            ),
         ..Default::default()
     };
     eframe::run_native("Fretwise", options, Box::new(|_cc| Ok(Box::new(App::new()))))

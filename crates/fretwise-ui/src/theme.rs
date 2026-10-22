@@ -105,6 +105,63 @@ pub fn pride_gradient(t: f32) -> Color32 {
     }
 }
 
+/// The Fretwise logo, a guitar pick striped like the flag with a sticker
+/// edge; drawn to match `assets/logo/fretwise-logo.svg` (a 64×64 box).
+pub fn paint_pick(painter: &egui::Painter, rect: Rect) {
+    let s = rect.width().min(rect.height()) / 64.0;
+    let at = |x: f32, y: f32| rect.center() + vec2(x - 32.0, y - 32.0) * s;
+    // The SVG outline: four cubics, sampled. The shape is convex.
+    let curves = [
+        [(32.0, 60.0), (24.0, 52.0), (6.0, 35.0), (6.0, 20.0)],
+        [(6.0, 20.0), (6.0, 9.0), (17.0, 4.0), (32.0, 4.0)],
+        [(32.0, 4.0), (47.0, 4.0), (58.0, 9.0), (58.0, 20.0)],
+        [(58.0, 20.0), (58.0, 35.0), (40.0, 52.0), (32.0, 60.0)],
+    ];
+    let mut outline = Vec::new();
+    for [p0, p1, p2, p3] in curves {
+        for i in 0..16 {
+            let t = i as f32 / 16.0;
+            let u = 1.0 - t;
+            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+            outline.push((a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0, a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1));
+        }
+    }
+    let points = |pts: &[(f32, f32)]| pts.iter().map(|&(x, y)| at(x, y)).collect::<Vec<_>>();
+    let plum = Color32::from_rgb(42, 31, 40);
+
+    // The white ring is a centred stroke over the stripes' edge, so the plum
+    // one is wider by as much to keep the same width showing outside it.
+    painter.add(egui::Shape::closed_line(points(&outline), Stroke::new(9.0 * s, plum)));
+    let stripes = [(0.0, 16.0, TRANS_BLUE), (16.0, 27.0, TRANS_PINK), (27.0, 37.0, TRANS_WHITE), (37.0, 46.0, TRANS_PINK), (46.0, 64.0, TRANS_BLUE)];
+    for (top, bottom, color) in stripes {
+        let band = clip_band(&outline, top, bottom);
+        if band.len() >= 3 {
+            painter.add(egui::Shape::convex_polygon(points(&band), color, Stroke::NONE));
+        }
+    }
+    painter.add(egui::Shape::closed_line(points(&outline), Stroke::new(3.0 * s, TRANS_WHITE)));
+}
+
+/// The part of a convex polygon between two horizontal lines.
+fn clip_band(poly: &[(f32, f32)], top: f32, bottom: f32) -> Vec<(f32, f32)> {
+    let clip = |poly: Vec<(f32, f32)>, y: f32, keep_below: bool| {
+        let inside = |p: (f32, f32)| if keep_below { p.1 >= y } else { p.1 <= y };
+        let mut out = Vec::new();
+        for (i, &p) in poly.iter().enumerate() {
+            let q = poly[(i + 1) % poly.len()];
+            if inside(p) {
+                out.push(p);
+            }
+            if inside(p) != inside(q) {
+                let t = (y - p.1) / (q.1 - p.1);
+                out.push((p.0 + (q.0 - p.0) * t, y));
+            }
+        }
+        out
+    };
+    clip(clip(poly.to_vec(), top, true), bottom, false)
+}
+
 pub fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
