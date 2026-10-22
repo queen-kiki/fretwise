@@ -836,26 +836,28 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// A little flame for the streak: a pink teardrop with a warm core.
+/// Lucide's "flame" icon (ISC licence, see assets/icons/Lucide-LICENSE.txt),
+/// its 24x24 path flattened to points once so egui can stroke it.
+const FLAME: [(f32, f32); 83] = [
+    (12.00, 3.00), (12.22, 3.79), (12.48, 4.54), (12.78, 5.27), (13.12, 5.96), (13.50, 6.62), (13.92, 7.26),
+    (14.38, 7.87), (14.88, 8.44), (15.42, 8.98), (16.00, 9.50), (16.57, 10.01), (17.08, 10.52), (17.53, 11.04),
+    (17.92, 11.58), (18.25, 12.12), (18.52, 12.68), (18.73, 13.25), (18.88, 13.82), (18.97, 14.40), (19.00, 15.00),
+    (18.94, 15.91), (18.76, 16.81), (18.47, 17.68), (18.06, 18.50), (17.55, 19.26), (16.95, 19.95), (16.26, 20.55),
+    (15.50, 21.06), (14.68, 21.47), (13.81, 21.76), (12.91, 21.94), (12.00, 22.00), (11.09, 21.94), (10.19, 21.76),
+    (9.32, 21.47), (8.50, 21.06), (7.74, 20.55), (7.05, 19.95), (6.45, 19.26), (5.94, 18.50), (5.53, 17.68),
+    (5.24, 16.81), (5.06, 15.91), (5.00, 15.00), (5.03, 14.46), (5.11, 13.94), (5.26, 13.42), (5.45, 12.92),
+    (5.70, 12.45), (6.00, 12.00), (6.09, 12.65), (6.33, 13.25), (6.73, 13.77), (7.25, 14.17), (7.85, 14.41),
+    (8.50, 14.50), (9.15, 14.41), (9.75, 14.17), (10.27, 13.77), (10.67, 13.25), (10.91, 12.65), (11.00, 12.00),
+    (10.96, 11.43), (10.84, 10.90), (10.68, 10.42), (10.47, 9.95), (10.25, 9.50), (10.03, 9.05), (9.82, 8.58),
+    (9.66, 8.10), (9.54, 7.57), (9.50, 7.00), (9.53, 6.60), (9.60, 6.20), (9.72, 5.80), (9.90, 5.40),
+    (10.12, 5.00), (10.40, 4.60), (10.72, 4.20), (11.10, 3.80), (11.53, 3.40), (12.00, 3.00)
+];
+
+/// The streak flame: Lucide's outline in pink, `h` points tall.
 pub fn flame(painter: &egui::Painter, c: egui::Pos2, h: f32) {
-    let drop = |scale: f32, color: Color32| {
-        let pts: Vec<egui::Pos2> = (0..24)
-            .map(|i| {
-                let a = i as f32 / 24.0 * std::f32::consts::TAU;
-                let (sx, sy) = (a.sin(), a.cos());
-                // A circle drawn out into a point at the top.
-                let up = (-sy).max(0.0);
-                // Narrower and taller towards the top; stays convex.
-                let x = sx * h * 0.32 * scale * (1.0 - 0.5 * up);
-                let y = -sy * h * 0.32 * scale * (1.0 + 1.0 * up);
-                // The core sits low, like the hottest part of a flame.
-                c + vec2(x, y + h * 0.16 * (1.0 - scale))
-            })
-            .collect();
-        painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
-    };
-    drop(1.0, Color32::from_rgb(255, 120, 150));
-    drop(0.5, Color32::from_rgb(255, 214, 120));
+    let scale = h / 24.0;
+    let pts: Vec<egui::Pos2> = FLAME.iter().map(|&(x, y)| c + vec2(x - 12.0, y - 12.5) * scale).collect();
+    painter.add(egui::Shape::closed_line(pts, Stroke::new(2.0 * scale, crate::theme::TRANS_PINK)));
 }
 
 /// Today's session as one bar: done over done + still to go, filled with
