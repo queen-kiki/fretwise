@@ -232,7 +232,99 @@ impl<'de> Deserialize<'de> for ChordKind {
     }
 }
 
-/// How the chord trainer walks through the selected deck's chords.
+/// Chord families, read from the voicing file's id suffix (`a-open`,
+/// `c-barre`, `g5-power`, `g7-jazz`); anything else counts as jazz.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChordFamily {
+    Open,
+    Barre,
+    Power,
+    Jazz,
+}
+
+impl ChordFamily {
+    pub const ALL: [ChordFamily; 4] = [Self::Open, Self::Barre, Self::Power, Self::Jazz];
+
+    fn of(id: &str) -> Self {
+        if id.ends_with("-open") {
+            Self::Open
+        } else if id.ends_with("-barre") {
+            Self::Barre
+        } else if id.ends_with("-power") {
+            Self::Power
+        } else {
+            Self::Jazz
+        }
+    }
+
+    /// "Open chords", as a group heading.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Open => "Open chords",
+            Self::Barre => "Barre chords",
+            Self::Power => "Power chords",
+            Self::Jazz => "Jazz chords",
+        }
+    }
+
+    /// "All open chords", as a choice that drills the whole family.
+    pub fn all_label(self) -> &'static str {
+        match self {
+            Self::Open => "All open chords",
+            Self::Barre => "All barre chords",
+            Self::Power => "All power chords",
+            Self::Jazz => "All jazz chords",
+        }
+    }
+
+    /// The family's chords, sorted by name.
+    pub fn chords(self) -> Vec<ChordKind> {
+        let mut chords: Vec<ChordKind> = ChordKind::all().filter(|c| c.family() == self).collect();
+        chords.sort_by_key(|c| c.name());
+        chords
+    }
+}
+
+impl ChordKind {
+    pub fn family(self) -> ChordFamily {
+        ChordFamily::of(self.id())
+    }
+}
+
+/// What the chord drill asks for: a whole family, or one chord to get clean.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChordPick {
+    Family(ChordFamily),
+    One(ChordKind),
+    /// A Learn deck's chords, in deck order (not offered in the UI).
+    Deck(DeckKind),
+}
+
+impl Default for ChordPick {
+    fn default() -> Self {
+        Self::Family(ChordFamily::Open)
+    }
+}
+
+impl ChordPick {
+    pub fn chords(self) -> Vec<ChordKind> {
+        match self {
+            Self::Family(f) => f.chords(),
+            Self::One(c) => vec![c],
+            Self::Deck(d) => d.chords().to_vec(),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Family(f) => f.all_label(),
+            Self::One(c) => c.name(),
+            Self::Deck(d) => d.name(),
+        }
+    }
+}
+
+/// How the chord trainer walks through the selected chords.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChordOrder {
     /// Weighted towards chords you're slow on or miss.
@@ -244,8 +336,12 @@ pub enum ChordOrder {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChordTrainerConfig {
+    /// No longer drives the drill (that's `pick`); kept so saved settings
+    /// from before chord picks still load.
     #[serde(alias = "set")]
     pub deck: DeckKind,
+    /// Which chords the drill asks for.
+    pub pick: ChordPick,
     pub order: ChordOrder,
     /// Show the chord's dots and finger numbers on the neck before it's played.
     pub show_diagram: bool,
@@ -255,6 +351,7 @@ impl Default for ChordTrainerConfig {
     fn default() -> Self {
         Self {
             deck: DeckKind::default_chord_deck(),
+            pick: ChordPick::default(),
             order: ChordOrder::Random,
             show_diagram: true,
         }
@@ -402,7 +499,7 @@ impl ChordTrainer {
         }
         self.poly_since = [None; 12];
         self.class_seen_at = [f64::NEG_INFINITY; 12];
-        let chords = self.config.deck.chords();
+        let chords = self.config.pick.chords();
         if chords.is_empty() {
             self.current = None;
             return;
@@ -413,7 +510,7 @@ impl ChordTrainer {
                 self.seq_step += 1;
                 c
             }
-            ChordOrder::Random => self.pick_random(chords, prev),
+            ChordOrder::Random => self.pick_random(&chords, prev),
         };
         self.current = Some(ChordChallenge {
             chord,
@@ -594,6 +691,7 @@ mod tests {
     fn recognizes_strum_and_slow_arpeggio() {
         let cfg = ChordTrainerConfig {
             deck: DeckKind::by_id("first-chords").unwrap(),
+            pick: ChordPick::Deck(DeckKind::by_id("first-chords").unwrap()),
             order: ChordOrder::InOrder,
             show_diagram: true,
         };

@@ -25,7 +25,7 @@ pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use chime::Chime;
 pub use chord::{
     ChordChallenge, ChordFeedback, ChordKind, ChordOrder, ChordProgress, ChordTrainer, ChordTrainerConfig,
-    ChordVoicing,
+    ChordFamily, ChordPick, ChordVoicing,
 };
 pub use deck::{DeckDef, DeckKind};
 pub use fingering::fingering;
