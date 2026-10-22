@@ -186,6 +186,10 @@ impl FretwiseUi {
             ui.ctx().set_theme(theme);
         }
 
+        // As of the start of the frame, so the click that opens a panel
+        // doesn't also count as a click outside it.
+        let (settings_was_open, about_was_open) = (self.settings_open, self.about_open);
+
         egui::TopBottomPanel::top("fretwise_header")
             .frame(egui::Frame::NONE.inner_margin(egui::Margin { bottom: 10, ..Default::default() }))
             .show_separator_line(false)
@@ -199,17 +203,13 @@ impl FretwiseUi {
 
         // Settings float over the page rather than squeezing it, so the
         // neck and controls keep their layout at any window size.
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.about_open {
-                self.about_open = false;
-            } else {
-                self.settings_open = false;
-            }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && !about_was_open {
+            self.settings_open = false;
         }
         if self.settings_open {
             let area = ui.max_rect();
             let frame = egui::Frame::window(ui.style()).fill(rack_fill(ui)).inner_margin(16).corner_radius(8);
-            egui::Window::new("Settings")
+            let shown = egui::Window::new("Settings")
                 .title_bar(false)
                 .resizable(false)
                 .collapsible(false)
@@ -220,6 +220,15 @@ impl FretwiseUi {
                     ui.set_width(300.0);
                     self.settings_panel(ui, now, host);
                 });
+            // A click elsewhere closes it, unless it lands in one of its own
+            // dropdowns (a popup outside its rect) or dismisses About.
+            let press = ui.input(|i| if i.pointer.primary_pressed() { i.pointer.interact_pos() } else { None });
+            let popup_open = ui.ctx().memory(|m| m.any_popup_open());
+            if let (Some(p), Some(shown)) = (press, shown) {
+                if settings_was_open && !about_was_open && !popup_open && !shown.response.rect.contains(p) {
+                    self.settings_open = false;
+                }
+            }
         }
         if self.about_open {
             self.about_window(ui.ctx());
@@ -227,33 +236,28 @@ impl FretwiseUi {
     }
 
     fn about_window(&mut self, ctx: &egui::Context) {
+        // A modal: it dims the page and swallows the click that closes it,
+        // so dismissing it can't also turn a knob or toggle a string.
         let frame = egui::Frame::window(&ctx.style()).inner_margin(24).corner_radius(14);
-        egui::Window::new("About Fretwise")
-            .title_bar(false)
-            .resizable(false)
-            .collapsible(false)
-            .frame(frame)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.set_width(300.0);
-                ui.vertical_centered(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(300.0, 180.0), egui::Sense::hover());
-                    paint_flag(ui.painter(), rect, 10.0);
-                    ui.add_space(14.0);
-                    ui.label(RichText::new("Fretwise").size(30.0).strong());
-                    ui.label(RichText::new("guitar fretboard trainer").weak());
-                    ui.add_space(10.0);
-                    ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
-                    ui.label(format!("built {}", env!("FRETWISE_BUILD_DATE")));
-                    ui.add_space(12.0);
-                    let pink = if ui.visuals().dark_mode { TRANS_PINK } else { Color32::from_rgb(200, 70, 120) };
-                    ui.label(RichText::new("proudly slopped by kiki").italics().size(15.0).color(pink));
-                    ui.add_space(14.0);
-                    if ui.button("  Close  ").clicked() {
-                        self.about_open = false;
-                    }
-                });
+        let modal = egui::Modal::new(egui::Id::new("fretwise_about")).frame(frame).show(ctx, |ui| {
+            ui.set_width(300.0);
+            ui.vertical_centered(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(300.0, 180.0), egui::Sense::hover());
+                paint_flag(ui.painter(), rect, 10.0);
+                ui.add_space(14.0);
+                ui.label(RichText::new("Fretwise").size(30.0).strong());
+                ui.label(RichText::new("guitar fretboard trainer").weak());
+                ui.add_space(10.0);
+                ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+                ui.label(format!("built {}", env!("FRETWISE_BUILD_DATE")));
+                ui.add_space(12.0);
+                let pink = if ui.visuals().dark_mode { TRANS_PINK } else { Color32::from_rgb(200, 70, 120) };
+                ui.label(RichText::new("proudly slopped by kiki").italics().size(15.0).color(pink));
             });
+        });
+        if modal.should_close() {
+            self.about_open = false;
+        }
     }
 
     fn header(&mut self, ui: &mut egui::Ui, reading: &PitchReading, warning: Option<String>) {
@@ -295,22 +299,7 @@ impl FretwiseUi {
 
     /// Everything that's set once and left alone.
     fn settings_panel(&mut self, ui: &mut egui::Ui, now: f64, host: &mut dyn Host) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Settings").size(18.0).strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close = egui::Button::new(RichText::new("×").size(22.0)).frame(false);
-                if ui.add(close).on_hover_text("Close (Esc)").clicked() {
-                    self.settings_open = false;
-                }
-                ui.add_space(6.0);
-                let about = ui.add(egui::Button::new("About").frame(false));
-                let (rect, flag) = ui.allocate_exact_size(egui::vec2(24.0, 15.0), egui::Sense::click());
-                paint_flag(ui.painter(), rect, 3.0);
-                if about.clicked() || flag.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    self.about_open = true;
-                }
-            });
-        });
+        ui.label(RichText::new("Settings").size(18.0).strong());
         egui::ScrollArea::vertical().max_height(ui.ctx().screen_rect().height() - 130.0).show(ui, |ui| {
             section(ui, "Audio input");
             host.audio_settings(ui);
@@ -355,6 +344,12 @@ impl FretwiseUi {
             let themes = [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")];
             segmented(ui, &mut self.theme, &themes, 14.0);
 
+            // Tucked away at the bottom, where the curious will find it.
+            ui.add_space(18.0);
+            let about = ui.add(egui::Label::new(RichText::new("about").size(12.0).weak()).sense(egui::Sense::click()));
+            if about.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.about_open = true;
+            }
         });
     }
 
