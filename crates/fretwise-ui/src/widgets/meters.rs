@@ -34,15 +34,18 @@ pub fn tuner_gauge(ui: &mut Ui, cents: Option<f32>) {
     }
 }
 
-/// LED-style input meter, -60..0 dBFS: green, then yellow above -12, red
-/// above -3.
-pub fn level_meter(ui: &mut Ui, level_db: f32) -> Response {
+/// LED-style input meter, -60..0 dBFS: the flag colours, then yellow above
+/// -12, red above -3. Below `gate_db` nothing is detected, so the lit
+/// segments go grey; a tick marks where the gate sits.
+pub fn level_meter(ui: &mut Ui, level_db: f32, gate_db: f32) -> Response {
     let segments = 16;
     let (rect, response) = ui.allocate_exact_size(vec2(96.0, 12.0), Sense::hover());
     let painter = ui.painter();
     let gap = 1.5;
     let w = (rect.width() - gap * (segments - 1) as f32) / segments as f32;
     let lit = ((level_db + 60.0) / 60.0).clamp(0.0, 1.0) * segments as f32;
+    let gated = level_db < gate_db;
+    let gated_color = ui.visuals().weak_text_color().gamma_multiply(0.7);
     for i in 0..segments {
         let db = -60.0 + 60.0 * (i as f32 + 1.0) / segments as f32;
         // Healthy signal runs through the flag colours; yellow and red still
@@ -54,12 +57,24 @@ pub fn level_meter(ui: &mut Ui, level_db: f32) -> Response {
         } else {
             crate::theme::pride_gradient((db + 60.0) / 48.0)
         };
+        let color = if gated { gated_color } else { color };
         let on = (i as f32) < lit.round();
         let x = rect.left() + i as f32 * (w + gap);
         let seg = Rect::from_min_size(pos2(x, rect.top()), vec2(w, rect.height()));
         painter.rect_filled(seg, 1.5, if on { color } else { ui.visuals().extreme_bg_color });
     }
-    response.on_hover_text(format!("Input {level_db:.0} dBFS"))
+    // The gate, as a tick across the meter (at the left end if it's below -60).
+    let gate_x = rect.left() + ((gate_db + 60.0) / 60.0).clamp(0.0, 1.0) * rect.width();
+    painter.line_segment(
+        [pos2(gate_x, rect.top() - 3.0), pos2(gate_x, rect.bottom() + 3.0)],
+        Stroke::new(1.5_f32, ui.visuals().text_color()),
+    );
+    let hint = if gated {
+        format!("Input {level_db:.0} dBFS, below the gate at {gate_db:.0}: not listening. Set the gate in settings.")
+    } else {
+        format!("Input {level_db:.0} dBFS, gate {gate_db:.0}")
+    };
+    response.on_hover_text(hint)
 }
 
 /// The streak flame: Lucide's "flame" in pink, `h` points tall.

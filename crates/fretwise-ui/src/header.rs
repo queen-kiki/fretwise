@@ -52,7 +52,7 @@ impl FretwiseUi {
                     }
                 }
                 ui.add_space(14.0);
-                level_meter(ui, reading.level_db);
+                level_meter(ui, reading.level_db, reading.gate_db);
                 ui.label(RichText::new("IN").size(11.0).color(caption_color(ui)));
                 if let Some(w) = warning {
                     ui.add_space(10.0);
