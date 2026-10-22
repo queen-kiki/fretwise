@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The pride pick, stripes gently bent like a vibrating string -->
+  <defs><clipPath id="pk"><path d="M32 60C24 52 6 35 6 20C6 9 17 4 32 4S58 9 58 20C58 35 40 52 32 60Z"/></clipPath></defs>
+  <g clip-path="url(#pk)">
+    <rect width="64" height="64" fill="#5BCEFA"/>
+    <path d="M0 18Q16 13 32 18T64 18V48Q48 53 32 48T0 48Z" fill="#F5A9B8"/>
+    <path d="M0 28Q16 23 32 28T64 28V38Q48 43 32 38T0 38Z" fill="#FFFFFF"/>
+  </g>
+  <path d="M32 60C24 52 6 35 6 20C6 9 17 4 32 4S58 9 58 20C58 35 40 52 32 60Z" fill="none" stroke="#2A1F28" stroke-width="3.5" stroke-linejoin="round"/>
+</svg>

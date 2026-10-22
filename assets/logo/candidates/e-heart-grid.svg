@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A scale-pattern dot grid on five strings whose lit notes make a heart -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#2A1F28" stroke="#6E4E66" stroke-width="2"/>
+  <g stroke="#5E4258" stroke-width="2" stroke-linecap="round">
+    <path d="M12 10V56M22 10V56M32 10V56M42 10V56M52 10V56"/>
+  </g>
+  <g fill="#5BCEFA">
+    <circle cx="22" cy="16" r="4.4"/><circle cx="42" cy="16" r="4.4"/>
+  </g>
+  <g fill="#F5A9B8">
+    <circle cx="12" cy="27" r="4.4"/><circle cx="22" cy="27" r="4.4"/><circle cx="32" cy="27" r="4.4"/><circle cx="42" cy="27" r="4.4"/><circle cx="52" cy="27" r="4.4"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="22" cy="38" r="4.4"/><circle cx="32" cy="38" r="4.4"/><circle cx="42" cy="38" r="4.4"/>
+  </g>
+  <circle cx="32" cy="49" r="4.4" fill="#F5A9B8"/>
+</svg>

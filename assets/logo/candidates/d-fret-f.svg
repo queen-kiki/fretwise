@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- An F built from a nut and two frets, strings running through, one note lit -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#F5A9B8"/>
+  <g stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round">
+    <path d="M33 9V55M43 9V55M53 9V55"/>
+  </g>
+  <rect x="14" y="10" width="10" height="44" rx="3" fill="#2A1F28"/>
+  <rect x="14" y="10" width="38" height="8" rx="3" fill="#2A1F28"/>
+  <rect x="14" y="31" width="28" height="7" rx="3" fill="#2A1F28"/>
+  <circle cx="43" cy="46" r="6" fill="#5BCEFA" stroke="#2A1F28" stroke-width="2.5"/>
+</svg>

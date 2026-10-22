@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Six flag-coloured strings, getting thicker like real string gauges -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#2A1F28" stroke="#6E4E66" stroke-width="2"/>
+  <g stroke-linecap="round">
+    <path d="M12 12 H52" stroke="#5BCEFA" stroke-width="3"/>
+    <path d="M12 20 H52" stroke="#F5A9B8" stroke-width="3.7"/>
+    <path d="M12 28 H52" stroke="#FFFFFF" stroke-width="4.4"/>
+    <path d="M12 36 H52" stroke="#FFFFFF" stroke-width="5.1"/>
+    <path d="M12 44 H52" stroke="#F5A9B8" stroke-width="5.8"/>
+    <path d="M12 52 H52" stroke="#5BCEFA" stroke-width="6.5"/>
+  </g>
+</svg>

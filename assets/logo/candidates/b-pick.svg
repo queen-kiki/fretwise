@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A guitar pick striped like the trans flag -->
+  <defs>
+    <clipPath id="pick">
+      <path d="M32 60C24 52 6 35 6 20C6 9 17 4 32 4S58 9 58 20C58 35 40 52 32 60Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#pick)">
+    <rect x="0" y="0" width="64" height="16" fill="#5BCEFA"/>
+    <rect x="0" y="16" width="64" height="11" fill="#F5A9B8"/>
+    <rect x="0" y="27" width="64" height="10" fill="#FFFFFF"/>
+    <rect x="0" y="37" width="64" height="9" fill="#F5A9B8"/>
+    <rect x="0" y="46" width="64" height="18" fill="#5BCEFA"/>
+  </g>
+  <path d="M32 60C24 52 6 35 6 20C6 9 17 4 32 4S58 9 58 20C58 35 40 52 32 60Z" fill="none" stroke="#2A1F28" stroke-width="3.5" stroke-linejoin="round"/>
+</svg>

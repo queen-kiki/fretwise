@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A slice of neck, nut on the left, three inlays in flag colours -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#2A1F28" stroke="#6E4E66" stroke-width="2"/>
+  <g stroke="#6E4E66" stroke-width="2.5" stroke-linecap="round">
+    <path d="M10 15H56M10 32H56M10 49H56"/>
+  </g>
+  <rect x="8" y="9" width="7" height="46" rx="2.5" fill="#FFFFFF"/>
+  <rect x="31" y="9" width="4" height="46" rx="2" fill="#C9A4B8"/>
+  <rect x="51" y="9" width="4" height="46" rx="2" fill="#C9A4B8"/>
+  <circle cx="23" cy="15" r="6.5" fill="#5BCEFA"/>
+  <circle cx="43" cy="32" r="6.5" fill="#F5A9B8"/>
+  <circle cx="23" cy="49" r="6.5" fill="#5BCEFA"/>
+</svg>
