@@ -245,6 +245,9 @@ impl FretwiseUi {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(300.0, 180.0), egui::Sense::hover());
                 paint_flag(ui.painter(), rect, 10.0);
                 ui.add_space(14.0);
+                let (pick, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
+                paint_pick(ui.painter(), pick);
+                ui.add_space(4.0);
                 ui.label(RichText::new("Fretwise").size(30.0).strong());
                 ui.label(RichText::new("guitar fretboard trainer").weak());
                 ui.add_space(10.0);
@@ -257,9 +260,6 @@ impl FretwiseUi {
         });
         if modal.should_close() {
             self.about_open = false;
-                let (pick, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
-                paint_pick(ui.painter(), pick);
-                ui.add_space(4.0);
         }
     }
 
