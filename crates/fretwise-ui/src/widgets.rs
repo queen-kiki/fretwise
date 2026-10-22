@@ -554,3 +554,82 @@ pub fn level_meter(ui: &mut Ui, level_db: f32) -> Response {
     }
     response.on_hover_text(format!("Input {level_db:.0} dBFS"))
 }
+
+/// A drop-down picker in the segmented buttons' style: the current choice in
+/// a sunken box, and a list with a caption over each group. `width` is fixed
+/// so the panel doesn't shift as the choice changes.
+pub fn dropdown<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    id_salt: impl Hash,
+    value: &mut T,
+    shown: &str,
+    groups: &[(&str, Vec<(T, &str)>)],
+    width: f32,
+    text_size: f32,
+) -> bool {
+    let before = *value;
+    let height = text_size * 1.9 + 4.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let popup_id = ui.id().with(id_salt).with("list");
+    let open = ui.memory(|m| m.is_popup_open(popup_id));
+    if response.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+
+    let visuals = ui.visuals().clone();
+    let painter = ui.painter();
+    let hot = response.hovered() || open;
+    painter.rect_filled(rect, 8.0, visuals.extreme_bg_color);
+    if hot {
+        painter.rect_stroke(rect.shrink(1.0), 7.0, Stroke::new(1.5_f32, accent(ui)), StrokeKind::Inside);
+    }
+    let pad = text_size * 0.9;
+    let text_color = if hot { visuals.strong_text_color() } else { visuals.text_color() };
+    let chevron = 4.5;
+    let galley = painter.layout(
+        shown.to_string(),
+        FontId::proportional(text_size),
+        text_color,
+        width - 3.0 * pad - 2.0 * chevron,
+    );
+    // One line: names too long for the box are cut, with the full name on hover.
+    let clipped = painter.with_clip_rect(rect.shrink2(vec2(pad, 0.0)).intersect(painter.clip_rect()));
+    clipped.galley(pos2(rect.left() + pad, rect.center().y - text_size * 0.6), galley, text_color);
+    let c = pos2(rect.right() - pad - chevron, rect.center().y);
+    let tip = if open { -chevron * 0.6 } else { chevron * 0.6 };
+    painter.add(egui::Shape::convex_polygon(
+        vec![c + vec2(-chevron, -tip), c + vec2(chevron, -tip), c + vec2(0.0, tip)],
+        if hot { accent(ui) } else { visuals.weak_text_color() },
+        Stroke::NONE,
+    ));
+    let response = response.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(shown);
+
+    // Opens upwards: the front panel sits at the bottom of the window.
+    let room = (rect.top() - ui.ctx().screen_rect().top() - 40.0).max(160.0);
+    let above = egui::AboveOrBelow::Above;
+    egui::popup_above_or_below_widget(ui, popup_id, &response, above, PopupCloseBehavior::CloseOnClick, |ui| {
+        ui.set_min_width(width - 8.0);
+        // The popup's own area remembers its last size, so ask for the
+        // height outright rather than taking what's available.
+        egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).show(ui, |ui| {
+            for (i, (group, items)) in groups.iter().enumerate() {
+                if i > 0 {
+                    ui.add_space(6.0);
+                }
+                ui.label(egui::RichText::new(group.to_uppercase()).size(11.0).weak());
+                for (item, label) in items {
+                    let selected = *item == *value;
+                    let r = ui.selectable_label(selected, egui::RichText::new(*label).size(text_size - 1.0));
+                    // Show the current choice when the list opens.
+                    if selected && !open {
+                        r.scroll_to_me(None);
+                    }
+                    if r.clicked() {
+                        *value = *item;
+                    }
+                }
+            }
+        });
+    });
+    *value != before
+}

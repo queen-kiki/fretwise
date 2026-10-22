@@ -16,7 +16,7 @@ use fretwise_core::{
 use serde::{Deserialize, Serialize};
 
 use theme::{paint_flag, rack_fill, TRANS_BLUE, TRANS_PINK};
-use widgets::{fretboard, knob, level_meter, segmented, toggle, tuner_gauge, Marker, NeckControls};
+use widgets::{dropdown, fretboard, knob, level_meter, segmented, toggle, tuner_gauge, Marker, NeckControls};
 
 const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
 const BAD: Color32 = Color32::from_rgb(230, 90, 80);
@@ -560,12 +560,13 @@ impl FretwiseUi {
             if knob(ui, "root", "Key", &mut root, &roots) {
                 cfg.scale.root = root as u8;
             }
-            let all: Vec<ScaleKind> = ScaleKind::all().collect();
-            let mut kind = all.iter().position(|k| *k == cfg.scale.kind).unwrap_or(0);
-            let kinds: Vec<&str> = all.iter().map(|k| k.name()).collect();
-            if knob(ui, "kind", "Scale", &mut kind, &kinds) {
-                cfg.scale.kind = all[kind];
-            }
+            rack_group(ui, "Scale", |ui| {
+                let groups: Vec<(&str, Vec<(ScaleKind, &str)>)> = ScaleKind::groups()
+                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                    .collect();
+                let shown = cfg.scale.kind.name();
+                dropdown(ui, "scale", &mut cfg.scale.kind, shown, &groups, 210.0, 15.0);
+            });
             rack_group(ui, "Order", |ui| {
                 segmented(
                     ui,
