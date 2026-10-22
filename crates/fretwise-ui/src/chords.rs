@@ -1,7 +1,7 @@
 //! Free practice, chords: the chord drill.
 
 use egui::text::LayoutJob;
-use fretwise_core::{ChordFamily, ChordFeedback, ChordOrder, ChordPick, ChordTrainerConfig, DeckKind};
+use fretwise_core::{ChordFamily, ChordFeedback, ChordOrder, ChordPick, ChordTrainerConfig, DeckKind, GuideMode};
 
 use crate::parts::{
     center_stage, chord_markers, pitch_class_tokens, rack_frame, rack_group, terminal_screen, token, NECK_FRETS,
@@ -21,7 +21,7 @@ impl FretwiseUi {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(ui, |ui| self.chords_stage(ui, now));
-        let display_only = ChordTrainerConfig { show_diagram: before.show_diagram, ..self.chord_trainer.config };
+        let display_only = ChordTrainerConfig { diagram: before.diagram, ..self.chord_trainer.config };
         if display_only != before {
             self.chord_trainer.restart(now);
         }
@@ -31,7 +31,7 @@ impl FretwiseUi {
         let ch = self.chord_trainer.current().copied();
         let voicing = self.chord_trainer.current_chord();
         let resolved = self.chord_trainer.is_resolved();
-        let show_diagram = self.chord_trainer.config.show_diagram || resolved;
+        let show_diagram = self.chord_trainer.show_diagram();
 
         let mut markers = Vec::new();
         if let (Some(ch), Some(v)) = (ch, voicing) {
@@ -59,9 +59,14 @@ impl FretwiseUi {
             Some(v) => {
                 token(c, "strum ", &big, syn.keyword);
                 token(c, &v.name, &big, syn.note);
-                if let Some(barre) = v.barre.filter(|_| self.show_fingering) {
+                let shown = self.chord_trainer.show_diagram();
+                if let Some(barre) = v.barre.filter(|_| self.show_fingering && shown) {
                     token(c, "  barre fret ", &big, syn.text);
                     token(c, &barre.to_string(), &big, TARGET);
+                }
+                let known = self.chord_trainer.current().is_some_and(|ch| self.chord_trainer.knows(ch.chord));
+                if known && !shown {
+                    token(c, "  [from memory]", &big, syn.comment);
                 }
             }
             None => {
@@ -135,8 +140,8 @@ impl FretwiseUi {
             rack_group(ui, "Diagram", |ui| {
                 segmented(
                     ui,
-                    &mut self.chord_trainer.config.show_diagram,
-                    &[(true, "Show"), (false, "Hide")],
+                    &mut self.chord_trainer.config.diagram,
+                    &[(GuideMode::Auto, "Auto"), (GuideMode::Show, "Show"), (GuideMode::Hide, "Hide")],
                     15.0,
                 );
             });

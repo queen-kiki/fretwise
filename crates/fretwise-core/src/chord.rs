@@ -23,6 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::analyzer::PitchReading;
 use crate::deck::DeckKind;
+use crate::learn::GuideMode;
 use crate::registry;
 use crate::rng::Rng;
 use crate::theory::{nearest_note, Note, Position, Tuning};
@@ -305,8 +306,25 @@ pub struct ChordTrainerConfig {
     /// Which chords the drill asks for.
     pub pick: ChordPick,
     pub order: ChordOrder,
-    /// Show the chord's dots and finger numbers on the neck before it's played.
-    pub show_diagram: bool,
+    /// When to show the chord's dots and finger numbers on the neck before
+    /// it's played. Older saves have `show_diagram: true/false` instead.
+    #[serde(alias = "show_diagram", deserialize_with = "guide_or_bool")]
+    pub diagram: GuideMode,
+}
+
+/// A [`GuideMode`], or the `show_diagram` bool saved before there was Auto.
+fn guide_or_bool<'de, D: Deserializer<'de>>(d: D) -> Result<GuideMode, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Mode(GuideMode),
+        Shown(bool),
+    }
+    Ok(match Saved::deserialize(d)? {
+        Saved::Mode(mode) => mode,
+        Saved::Shown(true) => GuideMode::Show,
+        Saved::Shown(false) => GuideMode::Hide,
+    })
 }
 
 impl Default for ChordTrainerConfig {
@@ -315,7 +333,7 @@ impl Default for ChordTrainerConfig {
             deck: DeckKind::default_chord_deck(),
             pick: ChordPick::default(),
             order: ChordOrder::Random,
-            show_diagram: true,
+            diagram: GuideMode::Auto,
         }
     }
 }
@@ -358,6 +376,13 @@ const POLY_CENTS: f32 = 35.0;
 const SILENCE: f64 = 0.2;
 /// Seconds between a correct chord in the drill and the next prompt.
 const ADVANCE_DELAY: f64 = 0.75;
+/// With the diagram on Auto, a chord is known (and its diagram hidden) after
+/// this many clean strums...
+const KNOWN_AFTER: u32 = 3;
+/// ...at least this often without skipping...
+const KNOWN_ACCURACY: f64 = 0.8;
+/// ...and this fast on average, in seconds.
+const KNOWN_SECONDS: f64 = 3.0;
 
 /// What [`ChordListener::listen`] heard of the target chord.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -551,6 +576,27 @@ impl ChordTrainer {
         self.advance_at.is_some()
     }
 
+    /// Whether `chord` has been played cleanly and quickly often enough to
+    /// hide its diagram on Auto.
+    pub fn knows(&self, chord: ChordKind) -> bool {
+        self.stats.get(chord.id()).is_some_and(|s| {
+            s.first_try >= KNOWN_AFTER && s.accuracy() >= KNOWN_ACCURACY && s.avg_time() <= KNOWN_SECONDS
+        })
+    }
+
+    /// Whether the current chord's diagram should be on the neck right now:
+    /// always once it's been played.
+    pub fn show_diagram(&self) -> bool {
+        if self.is_resolved() {
+            return true;
+        }
+        match self.config.diagram {
+            GuideMode::Show => true,
+            GuideMode::Hide => false,
+            GuideMode::Auto => !self.current.is_some_and(|c| self.knows(c.chord)),
+        }
+    }
+
     pub fn progress(&self) -> ChordProgress {
         ChordProgress {
             stats: self.stats.clone(),
@@ -724,12 +770,44 @@ mod tests {
     }
 
     #[test]
+    fn diagram_setting_loads_from_the_old_bool() {
+        let old: ChordTrainerConfig = serde_json::from_str(r#"{"show_diagram": false}"#).unwrap();
+        assert_eq!(old.diagram, GuideMode::Hide);
+        let old: ChordTrainerConfig = serde_json::from_str(r#"{"show_diagram": true}"#).unwrap();
+        assert_eq!(old.diagram, GuideMode::Show);
+        let missing: ChordTrainerConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.diagram, GuideMode::Auto);
+        let json = serde_json::to_string(&old).unwrap();
+        assert!(json.contains(r#""diagram":"Show""#), "{json}");
+        assert_eq!(serde_json::from_str::<ChordTrainerConfig>(&json).unwrap(), old);
+    }
+
+    #[test]
+    fn auto_diagram_hides_once_a_chord_is_known() {
+        let em = ChordKind::by_id("em-open").unwrap();
+        let cfg = ChordTrainerConfig { pick: ChordPick::One(em), ..Default::default() };
+        let mut t = ChordTrainer::new(Tuning::STANDARD, cfg, 1);
+        t.restart(0.0);
+        assert!(t.show_diagram());
+        let s = PositionStats { attempts: 3, first_try: 3, total_time: 6.0 };
+        t.set_progress(ChordProgress { stats: [("em-open".to_string(), s)].into(), ..Default::default() });
+        assert!(t.knows(em));
+        assert!(!t.show_diagram());
+        // Slow on average: still shown.
+        let slow = PositionStats { total_time: 30.0, ..s };
+        t.set_progress(ChordProgress { stats: [("em-open".to_string(), slow)].into(), ..Default::default() });
+        assert!(t.show_diagram());
+        t.config.diagram = GuideMode::Hide;
+        assert!(!t.show_diagram());
+    }
+
+    #[test]
     fn recognizes_strum_and_slow_arpeggio() {
         let cfg = ChordTrainerConfig {
             deck: DeckKind::by_id("first-chords").unwrap(),
             pick: ChordPick::Deck(DeckKind::by_id("first-chords").unwrap()),
             order: ChordOrder::InOrder,
-            show_diagram: true,
+            diagram: GuideMode::Show,
         };
         let mut t = ChordTrainer::new(Tuning::STANDARD, cfg, 7);
         t.restart(0.0);
