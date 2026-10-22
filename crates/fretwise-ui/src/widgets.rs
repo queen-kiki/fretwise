@@ -8,7 +8,8 @@ use egui::{
     pos2, vec2, Align2, Color32, CursorIcon, FontId, Id, PopupCloseBehavior, Rect, Response, Sense, Stroke,
     StrokeKind, Ui,
 };
-use fretwise_core::{Position, Tuning};
+use fretwise_core::theory::string_number;
+use fretwise_core::Position;
 
 pub struct Marker {
     pub pos: Position,
@@ -38,11 +39,10 @@ pub struct NeckControls<'a> {
 
 /// Horizontal fretboard, high E on top like tab. Frets are evenly spaced
 /// (easier to read than real scale length at this size). With `controls`,
-/// the fret numbers become a draggable range and the string names toggle
+/// the fret numbers become a draggable range and the string numbers toggle
 /// strings; returns true if either changed.
 pub fn fretboard(
     ui: &mut Ui,
-    tuning: &Tuning,
     frets: u8,
     height: f32,
     markers: &[Marker],
@@ -165,7 +165,8 @@ pub fn fretboard(
                 name_color = line;
             }
         }
-        let name = tuning.strings[s].to_string();
+        // Strings go by number, 1 = high E, as in the prompt.
+        let name = string_number(s).to_string();
         painter.text(name_rect.center(), Align2::CENTER_CENTER, name, FontId::proportional(14.0), name_color);
     }
 

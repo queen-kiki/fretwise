@@ -26,7 +26,8 @@ move when you play.
   degrees.
 - **Fret range**: drag the lit strip of fret numbers under the neck. Drag an
   end to resize it, drag the middle to move it, or click a fret outside it.
-- **Strings**: click a string name left of the neck to leave it out.
+- **Strings**: go by number, 1 = high E to 6 = low E, on the neck and in the
+  prompt. Click a string number left of the neck to leave it out.
 - **Fingering**: when the fret range fits one hand position (up to 5 frets,
   e.g. 5 to 8), the prompt says which finger to use: "with finger 3", 1 index
   to 4 pinky, or "open string". It follows the standard "one finger per

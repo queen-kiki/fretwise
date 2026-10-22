@@ -350,7 +350,7 @@ impl FretwiseUi {
             ui.label(RichText::new("For fret ranges up to 5 frets wide, e.g. 5 to 8.").weak().size(12.0));
             setting_switch(ui, &mut self.chime_enabled, "Chime on correct notes");
             ui.add_space(4.0);
-            ui.label(RichText::new("Click string names on the neck to leave strings out.").weak());
+            ui.label(RichText::new("Click string numbers on the neck to leave strings out.").weak());
 
             section(ui, "Appearance");
             let themes = [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")];
@@ -478,12 +478,9 @@ impl FretwiseUi {
                     Labels::Degree => format!("degree {}", self.label(ch.note)),
                 };
                 let text = match style {
-                    PromptStyle::NameOnString => format!(
-                        "Play {} on string {} ({})",
-                        what,
-                        string_number(ch.position.string),
-                        self.tuning.strings[ch.position.string],
-                    ),
+                    PromptStyle::NameOnString => {
+                        format!("Play {} on string {}", what, string_number(ch.position.string))
+                    }
                     PromptStyle::FretboardDot => "Play the marked note".to_string(),
                 };
                 let text = match self.target_finger() {
@@ -578,7 +575,7 @@ impl FretwiseUi {
             max_fret: &mut cfg.max_fret,
             strings: &mut cfg.strings,
         };
-        fretboard(ui, &self.tuning, 15, height, &markers, Some(controls));
+        fretboard(ui, 15, height, &markers, Some(controls));
     }
 
     /// The positions the pattern shows: every candidate for random order,
@@ -666,7 +663,7 @@ impl FretwiseUi {
             }
         }
         let height = (ui.available_height() - 48.0).clamp(220.0, 360.0);
-        fretboard(ui, &self.tuning, 15, height, &markers, None);
+        fretboard(ui, 15, height, &markers, None);
         ui.add_space(8.0);
         if ui.button("Reset progress").clicked() {
             self.trainer.reset_stats();
