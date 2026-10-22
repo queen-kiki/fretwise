@@ -28,6 +28,7 @@ pub fn fingering(positions: &[Position], first_fret: u8) -> Option<Vec<u8>> {
         return Some(vec![0; positions.len()]);
     };
     if hi - low_note > MAX_SPAN {
+        // TODO: split wide ranges into overlapping hand positions (see TODO.md).
         return None;
     }
     // Where the index finger sits: the range's first fret, unless that
