@@ -237,7 +237,8 @@ impl PolyDetector {
                 self.notes.push(peak);
             }
         }
-        self.notes.sort_by(|a, b| b.amp.total_cmp(&a.amp));
+        // Unstable: a stable sort may allocate, and this is the audio thread.
+        self.notes.sort_unstable_by(|a, b| b.amp.total_cmp(&a.amp));
         for (slot, n) in self.found.iter_mut().zip(&self.notes) {
             *slot = n.freq;
         }
