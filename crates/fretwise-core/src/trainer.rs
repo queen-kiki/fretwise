@@ -314,7 +314,12 @@ impl Trainer {
         Some(p)
     }
 
+    /// Give up on the current prompt. Does nothing in the pause after a
+    /// right answer: that one is already done.
     pub fn skip(&mut self, now: f64) {
+        if self.is_resolved() {
+            return;
+        }
         if let Some(ch) = self.current {
             let s = self.stats.entry(ch.position).or_default();
             s.attempts += 1;
@@ -404,6 +409,18 @@ mod tests {
         assert_ne!(next.note, target);
         // The still-ringing old note isn't held against the new prompt.
         assert_eq!(t.wrong, 0);
+    }
+
+    #[test]
+    fn skipping_in_the_pause_after_a_right_answer_does_nothing() {
+        let mut t = trainer();
+        let target = t.current().unwrap().note;
+        t.update(1.0, Some(target));
+        assert!(t.is_resolved());
+        t.skip(1.1);
+        assert_eq!((t.correct, t.wrong, t.streak), (1, 0, 1));
+        assert!(t.is_resolved());
+        assert_eq!(t.current().unwrap().note, target);
     }
 
     #[test]

@@ -409,7 +409,12 @@ impl LearnTrainer {
         });
     }
 
+    /// Give up on the current card. Does nothing in the pause after a
+    /// finished card: that one is already done.
     pub fn skip(&mut self, now: f64) {
+        if self.is_resolved() {
+            return;
+        }
         let unix_now = unix_seconds(now);
         if let Some(key) = self.current_key() {
             let before = self.card_state(&key);
@@ -587,6 +592,10 @@ mod tests {
         assert!(t.is_resolved());
         assert_eq!(t.reviewed, 1);
         assert_eq!(t.card_state(&key).interval, 600.0); // fast run -> Easy -> 10m
+        // Skipping in the pause would grade the finished card Again: ignored.
+        t.skip(now + 0.1);
+        assert!(t.is_resolved());
+        assert_eq!(t.card_state(&key).interval, 600.0);
 
         // Override grade with Hard (key 2).
         assert!(t.regrade(Grade::Hard, now));

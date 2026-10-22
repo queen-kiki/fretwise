@@ -235,17 +235,18 @@ impl FretwiseUi {
         std::mem::take(&mut self.chime_pending)
     }
 
-    /// Space does what the skip button does, unless a text field has the
-    /// keyboard, a panel is open over the page, or the answer is already in.
+    /// Space does what the skip button does (which is nothing in the pause
+    /// after a right answer), unless a text field has the keyboard or a panel
+    /// is open over the page.
     fn skip_on_space(&mut self, ui: &egui::Ui, now: f64) {
         let pressed = ui.input(|i| i.key_pressed(egui::Key::Space));
         if !pressed || ui.ctx().wants_keyboard_input() || self.settings_open || self.about_open || self.browser_open {
             return;
         }
         match self.tab {
-            Tab::Trainer if !self.trainer.is_resolved() => self.trainer.skip(now),
-            Tab::Chords if !self.chord_trainer.is_resolved() => self.chord_trainer.skip(now),
-            Tab::Learn if !self.learn_trainer.is_resolved() && !self.learn_done(now) => self.learn_trainer.skip(now),
+            Tab::Trainer => self.trainer.skip(now),
+            Tab::Chords => self.chord_trainer.skip(now),
+            Tab::Learn if !self.learn_done(now) => self.learn_trainer.skip(now),
             _ => {}
         }
     }

@@ -680,7 +680,12 @@ impl ChordTrainer {
         self.rng.pick_weighted(&weights).map_or(chords[0], |i| pool[i])
     }
 
+    /// Give up on the current chord. Does nothing in the pause after a
+    /// right answer: that one is already done.
     pub fn skip(&mut self, now: f64) {
+        if self.is_resolved() {
+            return;
+        }
         if let Some(voicing) = self.current_chord() {
             let s = self.stats.entry(voicing.id.clone()).or_default();
             s.attempts += 1;
@@ -824,6 +829,12 @@ mod tests {
         t.update(0.5, &r, None, 440.0);
         assert!(t.is_resolved());
         assert_eq!(t.correct, 1);
+        // Skipping now would undo the strum just played: ignored.
+        t.skip(0.6);
+        assert!(t.is_resolved());
+        assert_eq!(t.streak, 1);
+        assert!(matches!(t.feedback(), Some((ChordFeedback::Correct { .. }, _))));
+        assert_eq!(t.current_chord().unwrap().name, "Em");
 
         // Advance to Am, let silence clear the ringing Em, then arpeggiate A-C-E one by one.
         let silent = PitchReading { level_db: -80.0, ..Default::default() };
