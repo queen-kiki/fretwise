@@ -7,6 +7,7 @@ pub struct Marker {
     pub pos: Position,
     pub color: Color32,
     pub label: Option<String>,
+    pub text: Color32,
 }
 
 /// Horizontal fretboard, high E on top like tab. Frets are evenly spaced
@@ -89,7 +90,7 @@ pub fn fretboard(ui: &mut egui::Ui, tuning: &Tuning, frets: u8, markers: &[Marke
         let c = pos2(fret_center(m.pos.fret), string_y(m.pos.string));
         painter.circle_filled(c, radius, m.color);
         if let Some(label) = &m.label {
-            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * 0.9), Color32::BLACK);
+            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * 0.9), m.text);
         }
     }
 }

@@ -37,6 +37,7 @@ pub struct FretwiseUi {
     smoothed_cents: f32,
     chime_enabled: bool,
     chime_pending: bool,
+    show_pattern: bool,
 }
 
 impl Default for FretwiseUi {
@@ -54,6 +55,7 @@ impl Default for FretwiseUi {
             smoothed_cents: 0.0,
             chime_enabled: true,
             chime_pending: false,
+            show_pattern: true,
         }
     }
 }
@@ -71,6 +73,8 @@ pub struct UiState {
     progress: Progress,
     /// Play a sound on correct answers.
     chime: bool,
+    /// Draw the scale's positions on the trainer's fretboard.
+    show_pattern: bool,
 }
 
 impl Default for UiState {
@@ -87,6 +91,7 @@ impl FretwiseUi {
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
             chime_enabled: state.chime,
+            show_pattern: state.show_pattern,
             ..defaults
         };
         let mut cfg = state.trainer;
@@ -106,6 +111,7 @@ impl FretwiseUi {
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
             chime: self.chime_enabled,
+            show_pattern: self.show_pattern,
         }
     }
 
@@ -268,7 +274,7 @@ impl FretwiseUi {
                     RichText::new(format!("✔ {} in {seconds:.1}s", self.label_full(note))).color(GOOD)
                 }
                 Some((Feedback::Wrong { played, .. }, _)) => {
-                    RichText::new(format!("✘ that was {}", self.label_full(played))).color(BAD)
+                    RichText::new(format!("× that was {}", self.label_full(played))).color(BAD)
                 }
                 Some((Feedback::Skipped { expected }, _)) => {
                     RichText::new(format!("skipped — it was {}", self.label_full(expected))).weak()
@@ -283,19 +289,44 @@ impl FretwiseUi {
         });
         ui.add_space(8.0);
 
-        // Fretboard
+        // Fretboard: the pattern underneath, then what's heard, then the target.
         let mut markers = Vec::new();
+        if self.show_pattern {
+            let visuals = ui.visuals();
+            let positions = match self.trainer.config.order {
+                Order::Random => self.trainer.candidates(),
+                Order::Ascending | Order::UpDown => self.trainer.sequence(),
+            };
+            for pos in positions {
+                let note = self.tuning.note_at(pos);
+                let is_root = note.pitch_class() == scale.root % 12 && scale.kind != ScaleKind::Chromatic;
+                // Roots stand out from the rest, in either theme.
+                let (fill, text) = match (visuals.dark_mode, is_root) {
+                    (true, false) => (Color32::from_gray(60), visuals.text_color()),
+                    (true, true) => (Color32::from_gray(175), Color32::BLACK),
+                    (false, false) => (Color32::from_gray(215), visuals.text_color()),
+                    (false, true) => (Color32::from_gray(120), Color32::WHITE),
+                };
+                markers.push(Marker { pos, color: fill, label: Some(self.label(note)), text });
+            }
+        }
         if let Some(h) = held {
             for pos in self.tuning.positions_of(h.note, 15) {
-                markers.push(Marker { pos, color: HEARD.gamma_multiply(0.5), label: Some(self.label(h.note)) });
+                markers.push(Marker {
+                    pos,
+                    color: HEARD.gamma_multiply(0.5),
+                    label: Some(self.label(h.note)),
+                    text: Color32::BLACK,
+                });
             }
         }
         if let Some(ch) = ch {
-            let show_target = style == PromptStyle::FretboardDot || self.trainer.is_resolved();
-            if show_target {
-                let color = if self.trainer.is_resolved() { GOOD } else { TARGET };
-                let label = self.trainer.is_resolved().then(|| self.label(ch.note));
-                markers.push(Marker { pos: ch.position, color, label });
+            let resolved = self.trainer.is_resolved();
+            if self.show_pattern || style == PromptStyle::FretboardDot || resolved {
+                let color = if resolved { GOOD } else { TARGET };
+                // The pattern already names every spot, so naming the target gives nothing away.
+                let label = (self.show_pattern || resolved).then(|| self.label(ch.note));
+                markers.push(Marker { pos: ch.position, color, label, text: Color32::BLACK });
             }
         }
         fretboard(ui, &self.tuning, 15, &markers);
@@ -306,7 +337,7 @@ impl FretwiseUi {
                 self.trainer.skip(now);
             }
             ui.label(format!(
-                "streak {}   best {}   ✔ {}   ✘ {}",
+                "streak {}   best {}   ✔ {}   × {}",
                 self.trainer.streak, self.trainer.best_streak, self.trainer.correct, self.trainer.wrong
             ));
         });
@@ -323,6 +354,7 @@ impl FretwiseUi {
             ui.selectable_value(&mut cfg.labels, Labels::NoteName, "Notes");
             ui.selectable_value(&mut cfg.labels, Labels::Degree, "Degrees");
             ui.separator();
+            ui.checkbox(&mut self.show_pattern, "Show pattern");
             ui.checkbox(&mut self.chime_enabled, "Sound on correct");
         });
         ui.horizontal(|ui| {
@@ -382,7 +414,12 @@ impl FretwiseUi {
                         (BAD.g() as f32 * (1.0 - acc) + GOOD.g() as f32 * acc) as u8,
                         (BAD.b() as f32 * (1.0 - acc) + GOOD.b() as f32 * acc) as u8,
                     );
-                    markers.push(Marker { pos, color, label: Some(format!("{:.1}", s.avg_time())) });
+                    markers.push(Marker {
+                        pos,
+                        color,
+                        label: Some(format!("{:.1}", s.avg_time())),
+                        text: Color32::BLACK,
+                    });
                 }
             }
         }
