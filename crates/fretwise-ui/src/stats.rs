@@ -38,6 +38,7 @@ impl FretwiseUi {
         ui.add_space(8.0);
         if plain_button(ui, "Reset progress", 14.0).clicked() {
             self.trainer.reset_stats();
+            self.chord_trainer.reset_stats();
             self.learn_trainer.reset_stats();
         }
     }

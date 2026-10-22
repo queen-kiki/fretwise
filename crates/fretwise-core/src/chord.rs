@@ -567,6 +567,13 @@ impl ChordTrainer {
         self.correct = p.correct;
     }
 
+    pub fn reset_stats(&mut self) {
+        self.stats.clear();
+        self.streak = 0;
+        self.best_streak = 0;
+        self.correct = 0;
+    }
+
     pub fn restart(&mut self, now: f64) {
         self.current = None;
         self.advance_at = None;
@@ -732,5 +739,8 @@ mod tests {
         t.update(2.9, &silent, Some(Note(60)), 440.0); // C4
         assert!(t.is_resolved());
         assert_eq!(t.correct, 2);
+
+        t.reset_stats();
+        assert_eq!(t.progress(), ChordProgress::default());
     }
 }
