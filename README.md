@@ -28,8 +28,8 @@ move when you play.
   end to resize it, drag the middle to move it, or click a fret outside it.
 - **Strings**: click a string name left of the neck to leave it out.
 - **Fingering**: when the fret range fits one hand position (up to 5 frets,
-  e.g. 5 to 8), each dot of the pattern gets a small finger number: 1 index
-  to 4 pinky, 0 for an open string. It follows the standard "one finger per
+  e.g. 5 to 8), the prompt says which finger to use: "with finger 3", 1 index
+  to 4 pinky, or "open string". It follows the standard "one finger per
   fret" rule: the index sits on the first fret of the range, and the pinky
   stretches to a fifth fret. Wider ranges hold several overlapping positions
   with no single right answer, so they show no numbers. You can turn this off

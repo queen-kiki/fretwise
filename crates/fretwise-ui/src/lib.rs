@@ -117,7 +117,8 @@ pub struct UiState {
     chime: bool,
     /// Draw the scale's positions on the trainer's fretboard.
     show_pattern: bool,
-    /// Finger numbers next to the pattern, when it fits one hand position.
+    /// Name the finger for the target in the prompt, when the pattern fits
+    /// one hand position.
     show_fingering: bool,
     settings_open: bool,
     theme: Theme,
@@ -345,10 +346,8 @@ impl FretwiseUi {
             );
             ui.add_space(6.0);
             setting_switch(ui, &mut self.show_pattern, "Show the scale pattern");
-            ui.add_enabled_ui(self.show_pattern, |ui| {
-                setting_switch(ui, &mut self.show_fingering, "Show fingering");
-                ui.label(RichText::new("For fret ranges up to 5 frets wide, e.g. 5 to 8.").weak().size(12.0));
-            });
+            setting_switch(ui, &mut self.show_fingering, "Say which finger plays the note");
+            ui.label(RichText::new("For fret ranges up to 5 frets wide, e.g. 5 to 8.").weak().size(12.0));
             setting_switch(ui, &mut self.chime_enabled, "Chime on correct notes");
             ui.add_space(4.0);
             ui.label(RichText::new("Click string names on the neck to leave strings out.").weak());
@@ -487,6 +486,11 @@ impl FretwiseUi {
                     ),
                     PromptStyle::FretboardDot => "Play the marked note".to_string(),
                 };
+                let text = match self.target_finger() {
+                    Some(0) => format!("{text}, open string"),
+                    Some(f) => format!("{text} with finger {f}"),
+                    None => text,
+                };
                 ui.label(RichText::new(text).size(34.0).strong());
             } else {
                 ui.label(RichText::new("Nothing to play — widen the fret range or turn strings back on").size(22.0));
@@ -517,19 +521,12 @@ impl FretwiseUi {
         let mut markers = Vec::new();
         if self.show_pattern {
             let visuals = ui.visuals();
-            let mut positions = match self.trainer.config.order {
-                Order::Random => self.trainer.candidates(),
-                Order::Ascending | Order::UpDown => self.trainer.sequence(),
-            };
+            let mut positions = self.pattern();
             let interval = |pos: Position| (self.tuning.note_at(pos).pitch_class() + 12 - scale.root % 12) % 12;
             // Every note is in the chromatic scale, so only the key's root is marked.
             if scale.kind.is_chromatic() {
                 positions.retain(|&pos| interval(pos) == 0);
             }
-            let fingers = self
-                .show_fingering
-                .then(|| fingering(&positions, self.trainer.config.min_fret))
-                .flatten();
             // Small and unlabelled, so the shape reads at a glance: a bright
             // tonic, a slightly bigger 5th, the rest smallest.
             let (root_fill, other_fill) = if visuals.dark_mode {
@@ -537,14 +534,13 @@ impl FretwiseUi {
             } else {
                 (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
             };
-            for (i, &pos) in positions.iter().enumerate() {
+            for pos in positions {
                 let (color, size) = match interval(pos) {
                     0 => (root_fill, 0.55),
                     7 => (other_fill, 0.42),
                     _ => (other_fill, 0.32),
                 };
-                let finger = fingers.as_ref().map(|f| f[i]);
-                markers.push(Marker { pos, color, size, ring: false, label: None, finger, text: Color32::BLACK });
+                markers.push(Marker { pos, color, size, ring: false, label: None, text: Color32::BLACK });
             }
         }
         if let Some(h) = held {
@@ -555,7 +551,6 @@ impl FretwiseUi {
                     size: 0.42,
                     ring: false,
                     label: None,
-                    finger: None,
                     text: Color32::BLACK,
                 });
             }
@@ -572,7 +567,6 @@ impl FretwiseUi {
                     size: under + 0.28,
                     ring: true,
                     label: None,
-                    finger: None,
                     text: Color32::BLACK,
                 });
             }
@@ -585,6 +579,24 @@ impl FretwiseUi {
             strings: &mut cfg.strings,
         };
         fretboard(ui, &self.tuning, 15, height, &markers, Some(controls));
+    }
+
+    /// The positions the pattern shows: every candidate for random order,
+    /// the walk for Up and Up & down.
+    fn pattern(&self) -> Vec<Position> {
+        match self.trainer.config.order {
+            Order::Random => self.trainer.candidates(),
+            Order::Ascending | Order::UpDown => self.trainer.sequence(),
+        }
+    }
+
+    /// Which finger plays the target (0 = open string), if fingering is on
+    /// and the pattern fits one hand position.
+    fn target_finger(&self) -> Option<u8> {
+        let ch = self.trainer.current().filter(|_| self.show_fingering)?;
+        let pattern = self.pattern();
+        let fingers = fingering(&pattern, self.trainer.config.min_fret)?;
+        pattern.iter().position(|&p| p == ch.position).map(|i| fingers[i])
     }
 
     /// The everyday controls, laid out like a plug-in's front panel.
@@ -648,7 +660,6 @@ impl FretwiseUi {
                         size: 1.0,
                         ring: false,
                         label: Some(format!("{:.1}", s.avg_time())),
-                        finger: None,
                         text: Color32::BLACK,
                     });
                 }

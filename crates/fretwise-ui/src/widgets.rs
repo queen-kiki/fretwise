@@ -18,8 +18,6 @@ pub struct Marker {
     /// Draw an outline around the spot instead of a filled dot.
     pub ring: bool,
     pub label: Option<String>,
-    /// Finger number, drawn small beside the dot: 0 open, 1 index to 4 pinky.
-    pub finger: Option<u8>,
     pub text: Color32,
 }
 
@@ -209,12 +207,6 @@ pub fn fretboard(
         }
         if let Some(label) = &m.label {
             painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * m.size * 0.8), m.text);
-        }
-        if let Some(finger) = m.finger {
-            // Up and to the right, clear of the dot and of the string line.
-            let at = c + vec2(1.0, -1.0) * (radius * m.size * 0.75 + 3.0);
-            let font = FontId::proportional((radius * 0.75).max(12.0));
-            painter.text(at, Align2::LEFT_BOTTOM, finger.to_string(), font, visuals.strong_text_color());
         }
     }
     changed
