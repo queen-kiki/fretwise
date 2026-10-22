@@ -8,9 +8,10 @@ use cpal::HostId;
 use fretwise_ui::FretwiseUi;
 use state::{AudioSettings, SavedState, Store};
 
-struct App {
-    audio: AudioEngine,
-    ui: FretwiseUi,
+/// The input device and how it's doing: the app's part of the settings
+/// panel.
+struct AudioSetup {
+    engine: AudioEngine,
     host: HostId,
     device: Option<String>,
     devices: Vec<String>,
@@ -18,6 +19,11 @@ struct App {
     channel_count: u16,
     error: Option<String>,
     output_error: Option<String>,
+}
+
+struct App {
+    audio: AudioSetup,
+    ui: FretwiseUi,
     store: Store,
     last_save: f64,
 }
@@ -37,9 +43,8 @@ impl App {
             (Some(_), Some(d)) => (Some(d), audio.channel),
             _ => (AudioEngine::default_input(host), 0),
         };
-        let mut app = Self {
-            audio: AudioEngine::new(),
-            ui: FretwiseUi::from_state(saved.ui),
+        let mut audio = AudioSetup {
+            engine: AudioEngine::new(),
             host,
             device,
             devices: AudioEngine::input_devices(host),
@@ -47,32 +52,37 @@ impl App {
             channel_count: 0,
             error: None,
             output_error: None,
+        };
+        audio.restart();
+        Self {
+            audio,
+            ui: FretwiseUi::from_state(saved.ui),
             store,
             last_save: 0.0,
-        };
-        app.restart();
-        app
+        }
     }
 
     fn save(&mut self) {
         let state = SavedState {
             audio: AudioSettings {
-                host: Some(self.host.name().to_string()),
-                device: self.device.clone(),
-                channel: self.channel,
+                host: Some(self.audio.host.name().to_string()),
+                device: self.audio.device.clone(),
+                channel: self.audio.channel,
             },
             ui: self.ui.state(),
             ..Default::default()
         };
         self.store.save(&state);
     }
+}
 
+impl AudioSetup {
     fn restart(&mut self) {
         self.error = None;
         // Chimes go to the driver's default output, whatever the input is.
-        self.output_error = self.audio.start_output(self.host).err();
+        self.output_error = self.engine.start_output(self.host).err();
         let Some(device) = self.device.clone() else {
-            self.audio.stop_input();
+            self.engine.stop_input();
             self.error = Some("no input device".into());
             return;
         };
@@ -80,21 +90,29 @@ impl App {
         if self.channel_count > 0 {
             self.channel = self.channel.min(self.channel_count as usize - 1);
         }
-        if let Err(e) = self.audio.start(self.host, &device, self.channel) {
+        if let Err(e) = self.engine.start(self.host, &device, self.channel) {
             self.error = Some(e);
         }
     }
+}
 
-    fn device_bar(&mut self, ui: &mut egui::Ui) {
+impl fretwise_ui::Host for AudioSetup {
+    fn warning(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    fn audio_settings(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_label("Driver")
+        egui::Grid::new("audio").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+            ui.label("Driver");
+            egui::ComboBox::from_id_salt("driver")
                 .selected_text(self.host.name())
+                .width(170.0)
                 .show_ui(ui, |ui| {
                     for h in AudioEngine::hosts() {
                         if ui.selectable_value(&mut self.host, h, h.name()).changed() {
                             // Release the device before switching driver models.
-                            self.audio.stop();
+                            self.engine.stop();
                             self.devices = AudioEngine::input_devices(h);
                             self.device = AudioEngine::default_input(h).or_else(|| self.devices.first().cloned());
                             self.channel = 0;
@@ -102,47 +120,51 @@ impl App {
                         }
                     }
                 });
+            ui.end_row();
 
-            egui::ComboBox::from_label("Input")
-                .selected_text(self.device.as_deref().unwrap_or("none"))
-                .width(260.0)
-                .show_ui(ui, |ui| {
-                    for d in &self.devices {
-                        if ui.selectable_value(&mut self.device, Some(d.clone()), d).changed() {
-                            self.channel = 0;
-                            changed = true;
+            ui.label("Device");
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("input")
+                    .selected_text(self.device.as_deref().unwrap_or("none"))
+                    .width(140.0)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        for d in &self.devices {
+                            if ui.selectable_value(&mut self.device, Some(d.clone()), d).changed() {
+                                self.channel = 0;
+                                changed = true;
+                            }
                         }
-                    }
-                });
-
-            egui::ComboBox::from_label("Channel")
-                .selected_text(format!("{}", self.channel + 1))
-                .show_ui(ui, |ui| {
-                    for c in 0..self.channel_count.max(1) as usize {
-                        changed |= ui.selectable_value(&mut self.channel, c, format!("{}", c + 1)).changed();
-                    }
-                });
-
-            if ui.button("⟳").on_hover_text("Rescan devices").clicked() {
-                self.devices = AudioEngine::input_devices(self.host);
-                changed = true;
-            }
-
-            fretwise_ui::show_level(ui, &self.audio.shared.load());
-
-            match (&self.error, &self.audio.info) {
-                (Some(e), _) => {
-                    ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+                    });
+                if ui.button("⟳").on_hover_text("Rescan devices").clicked() {
+                    self.devices = AudioEngine::input_devices(self.host);
+                    changed = true;
                 }
-                (None, Some(i)) => {
-                    ui.weak(format!("{} Hz · {} ch · {:?}", i.sample_rate, i.channels, i.format));
+            });
+            ui.end_row();
+
+            // Input jacks as buttons, the way they're numbered on the box.
+            ui.label("Input");
+            ui.horizontal_wrapped(|ui| {
+                for c in 0..self.channel_count.max(1) as usize {
+                    changed |= ui.selectable_value(&mut self.channel, c, format!(" {} ", c + 1)).changed();
                 }
-                _ => {}
-            }
-            if let Some(e) = &self.output_error {
-                ui.weak(format!("no sound: {e}"));
-            }
+            });
+            ui.end_row();
         });
+
+        match (&self.error, &self.engine.info) {
+            (Some(e), _) => {
+                ui.colored_label(egui::Color32::from_rgb(230, 90, 80), e);
+            }
+            (None, Some(i)) => {
+                ui.weak(format!("{} Hz · {} ch · {:?}", i.sample_rate, i.channels, i.format));
+            }
+            _ => {}
+        }
+        if let Some(e) = &self.output_error {
+            ui.weak(format!("no sound: {e}"));
+        }
         if changed {
             self.restart();
         }
@@ -151,15 +173,13 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("devices").show(ctx, |ui| {
-            ui.add_space(4.0);
-            self.device_bar(ui);
-            ui.add_space(2.0);
-        });
-        let reading = self.audio.shared.load();
-        egui::CentralPanel::default().show(ctx, |ui| self.ui.show(ui, reading));
+        let reading = self.audio.engine.shared.load();
+        let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(14);
+        egui::CentralPanel::default()
+            .frame(frame)
+            .show(ctx, |ui| self.ui.show(ui, reading, &mut self.audio));
         if self.ui.take_chime() {
-            self.audio.chime();
+            self.audio.engine.chime();
         }
 
         // Saving is skipped when nothing changed, so checking often is cheap.

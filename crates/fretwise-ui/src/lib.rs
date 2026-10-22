@@ -2,7 +2,7 @@
 //! hosted by eframe (standalone app) or by a plugin's egui editor.
 //!
 //! The host's only job is to hand [`FretwiseUi::show`] the latest
-//! [`PitchReading`] each frame.
+//! [`PitchReading`] each frame, plus anything it adds through [`Host`].
 
 mod widgets;
 
@@ -14,7 +14,7 @@ use fretwise_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use widgets::{fretboard, level_meter, tuner_gauge, Marker};
+use widgets::{fretboard, knob, level_meter, segmented, toggle, tuner_gauge, Marker, NeckControls};
 
 const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
 const BAD: Color32 = Color32::from_rgb(230, 90, 80);
@@ -28,8 +28,42 @@ enum Tab {
     Progress,
 }
 
+/// Colour scheme; `System` follows the OS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Theme {
+    System,
+    Dark,
+    Light,
+}
+
+impl From<Theme> for egui::ThemePreference {
+    fn from(t: Theme) -> Self {
+        match t {
+            Theme::System => Self::System,
+            Theme::Dark => Self::Dark,
+            Theme::Light => Self::Light,
+        }
+    }
+}
+
+/// What the host adds to the UI. The standalone app has an audio device to
+/// pick; a plugin gets its audio from the DAW and can pass `&mut ()`.
+pub trait Host {
+    /// A problem worth showing in the header, e.g. "no input device".
+    fn warning(&self) -> Option<String> {
+        None
+    }
+
+    /// Audio settings, drawn at the top of the settings panel.
+    fn audio_settings(&mut self, _ui: &mut egui::Ui) {}
+}
+
+impl Host for () {}
+
 pub struct FretwiseUi {
     tab: Tab,
+    settings_open: bool,
+    theme: Theme,
     a4: f32,
     tuning: Tuning,
     stabilizer: NoteStabilizer,
@@ -48,6 +82,8 @@ impl Default for FretwiseUi {
             .unwrap_or(1);
         Self {
             tab: Tab::Trainer,
+            settings_open: false,
+            theme: Theme::System,
             a4: 440.0,
             tuning: Tuning::STANDARD,
             stabilizer: NoteStabilizer::default(),
@@ -75,6 +111,8 @@ pub struct UiState {
     chime: bool,
     /// Draw the scale's positions on the trainer's fretboard.
     show_pattern: bool,
+    settings_open: bool,
+    theme: Theme,
 }
 
 impl Default for UiState {
@@ -88,6 +126,8 @@ impl FretwiseUi {
         let defaults = Self::default();
         let mut ui = Self {
             tab: state.tab,
+            settings_open: state.settings_open,
+            theme: state.theme,
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
             chime_enabled: state.chime,
@@ -112,6 +152,8 @@ impl FretwiseUi {
             progress: self.trainer.progress(),
             chime: self.chime_enabled,
             show_pattern: self.show_pattern,
+            settings_open: self.settings_open,
+            theme: self.theme,
         }
     }
 
@@ -121,7 +163,7 @@ impl FretwiseUi {
         std::mem::take(&mut self.chime_pending)
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, reading: PitchReading) {
+    pub fn show(&mut self, ui: &mut egui::Ui, reading: PitchReading, host: &mut dyn Host) {
         let now = ui.input(|i| i.time);
         let held = self.stabilizer.update(now, &reading, self.a4);
         if self.tab == Tab::Trainer {
@@ -134,33 +176,136 @@ impl FretwiseUi {
         }
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
-
-        let tuning_before = self.tuning;
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, Tab::Trainer, "Fretboard trainer");
-            ui.selectable_value(&mut self.tab, Tab::Tuner, "Tuner");
-            ui.selectable_value(&mut self.tab, Tab::Progress, "Progress");
-            ui.separator();
-            egui::ComboBox::from_id_salt("tuning")
-                .selected_text(self.tuning.name)
-                .show_ui(ui, |ui| {
-                    for t in Tuning::ALL {
-                        ui.selectable_value(&mut self.tuning, t, t.name);
-                    }
-                });
-            ui.add(egui::DragValue::new(&mut self.a4).range(415.0..=466.0).suffix(" Hz").prefix("A4 = "));
-        });
-        ui.separator();
-        if self.tuning != tuning_before {
-            self.trainer.tuning = self.tuning;
-            self.trainer.restart(now);
+        let theme = egui::ThemePreference::from(self.theme);
+        if ui.ctx().options(|o| o.theme_preference) != theme {
+            ui.ctx().set_theme(theme);
         }
 
-        match self.tab {
+        egui::TopBottomPanel::top("fretwise_header")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin { bottom: 10, ..Default::default() }))
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.header(ui, &reading, host.warning()));
+
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| match self.tab {
             Tab::Tuner => self.tuner_tab(ui, &reading),
             Tab::Trainer => self.trainer_tab(ui, now),
             Tab::Progress => self.progress_tab(ui),
+        });
+
+        // Settings float over the page rather than squeezing it, so the
+        // neck and controls keep their layout at any window size.
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.settings_open = false;
         }
+        if self.settings_open {
+            let area = ui.max_rect();
+            let frame = egui::Frame::window(ui.style()).fill(rack_fill(ui)).inner_margin(16).corner_radius(8);
+            egui::Window::new("Settings")
+                .title_bar(false)
+                .resizable(false)
+                .collapsible(false)
+                .frame(frame)
+                .pivot(egui::Align2::RIGHT_TOP)
+                .fixed_pos(egui::pos2(area.right(), area.top() + 52.0))
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(300.0);
+                    self.settings_panel(ui, now, host);
+                });
+        }
+    }
+
+    fn header(&mut self, ui: &mut egui::Ui, reading: &PitchReading, warning: Option<String>) {
+        ui.horizontal(|ui| {
+            segmented(
+                ui,
+                &mut self.tab,
+                &[(Tab::Trainer, "Trainer"), (Tab::Tuner, "Tuner"), (Tab::Progress, "Progress")],
+                16.0,
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let gear = ui
+                    .add(egui::Button::new(RichText::new("⚙").size(22.0)).selected(self.settings_open).frame(false))
+                    .on_hover_text("Settings: audio input, tuning, display");
+                if gear.clicked() {
+                    self.settings_open = !self.settings_open;
+                }
+                ui.add_space(10.0);
+                level_meter(ui, reading.level_db);
+                ui.label(RichText::new("IN").size(11.0).weak());
+                if let Some(w) = warning {
+                    ui.add_space(10.0);
+                    let chip = ui.add(egui::Button::new(RichText::new(format!("⚠ {w}")).color(BAD)).frame(false));
+                    if chip.on_hover_text("Open audio settings").clicked() {
+                        self.settings_open = true;
+                    }
+                }
+                if self.tab == Tab::Trainer {
+                    ui.add_space(24.0);
+                    let t = &self.trainer;
+                    readout(ui, "wrong", t.wrong, BAD);
+                    readout(ui, "right", t.correct, GOOD);
+                    readout(ui, "best", t.best_streak, ui.visuals().text_color());
+                    readout(ui, "streak", t.streak, ui.visuals().strong_text_color());
+                }
+            });
+        });
+    }
+
+    /// Everything that's set once and left alone.
+    fn settings_panel(&mut self, ui: &mut egui::Ui, now: f64, host: &mut dyn Host) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Settings").size(18.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let close = egui::Button::new(RichText::new("×").size(22.0)).frame(false);
+                if ui.add(close).on_hover_text("Close (Esc)").clicked() {
+                    self.settings_open = false;
+                }
+            });
+        });
+        egui::ScrollArea::vertical().max_height(ui.ctx().screen_rect().height() - 130.0).show(ui, |ui| {
+            section(ui, "Audio input");
+            host.audio_settings(ui);
+
+            section(ui, "Instrument");
+            let tuning_before = self.tuning;
+            egui::Grid::new("instrument").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Tuning");
+                egui::ComboBox::from_id_salt("tuning")
+                    .selected_text(self.tuning.name)
+                    .width(170.0)
+                    .show_ui(ui, |ui| {
+                        for t in Tuning::ALL {
+                            ui.selectable_value(&mut self.tuning, t, t.name);
+                        }
+                    });
+                ui.end_row();
+                ui.label("Reference");
+                ui.add(egui::DragValue::new(&mut self.a4).range(415.0..=466.0).suffix(" Hz").prefix("A4 = "));
+                ui.end_row();
+            });
+            if self.tuning != tuning_before {
+                self.trainer.tuning = self.tuning;
+                self.trainer.restart(now);
+            }
+
+            section(ui, "Trainer");
+            ui.label("Ask with");
+            segmented(
+                ui,
+                &mut self.trainer.config.style,
+                &[(PromptStyle::NameOnString, "Note name"), (PromptStyle::FretboardDot, "Dot on the neck")],
+                14.0,
+            );
+            ui.add_space(6.0);
+            setting_switch(ui, &mut self.show_pattern, "Show the scale pattern");
+            setting_switch(ui, &mut self.chime_enabled, "Chime on correct notes");
+            ui.add_space(4.0);
+            ui.label(RichText::new("Click string names on the neck to leave strings out.").weak());
+
+            section(ui, "Appearance");
+            let themes = [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")];
+            segmented(ui, &mut self.theme, &themes, 14.0);
+        });
     }
 
     fn tuner_tab(&mut self, ui: &mut egui::Ui, reading: &PitchReading) {
@@ -217,6 +362,8 @@ impl FretwiseUi {
                     ));
                 }
             }
+            ui.add_space(16.0);
+            ui.label(RichText::new(format!("{}  ·  A4 = {} Hz", self.tuning.name, self.a4)).weak());
         });
     }
 
@@ -238,14 +385,36 @@ impl FretwiseUi {
     }
 
     fn trainer_tab(&mut self, ui: &mut egui::Ui, now: f64) {
+        let before = self.trainer.config;
+        egui::TopBottomPanel::bottom("trainer_rack")
+            .frame(
+                egui::Frame::new()
+                    .fill(rack_fill(ui))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .corner_radius(8),
+            )
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.trainer_rack(ui, now));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| self.trainer_stage(ui, now));
+        // Labels and prompt style only change what's shown; don't send a
+        // pattern back to the bottom for them.
+        let display_only = TrainerConfig { labels: before.labels, style: before.style, ..self.trainer.config };
+        if display_only != before {
+            self.trainer.restart(now);
+        }
+    }
+
+    /// The prompt and the neck: what you look at while playing.
+    fn trainer_stage(&mut self, ui: &mut egui::Ui, now: f64) {
         let ch = self.trainer.current().copied();
         let held = self.stabilizer.current();
         let style = self.trainer.config.style;
         let scale = self.trainer.config.scale;
 
-        // Prompt
         ui.vertical_centered(|ui| {
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             if let Some(ch) = ch {
                 let what = match self.trainer.config.labels {
                     Labels::NoteName => ch.note.to_string(),
@@ -260,12 +429,9 @@ impl FretwiseUi {
                     ),
                     PromptStyle::FretboardDot => "Play the marked note".to_string(),
                 };
-                ui.label(RichText::new(text).size(32.0).strong());
-                if scale.kind != ScaleKind::Chromatic {
-                    ui.label(RichText::new(scale.name()).size(16.0).weak());
-                }
+                ui.label(RichText::new(text).size(34.0).strong());
             } else {
-                ui.label(RichText::new("Nothing to play — check the strings, frets and scale below").size(20.0));
+                ui.label(RichText::new("Nothing to play — widen the fret range or turn strings back on").size(22.0));
             }
 
             let fb = self.trainer.feedback().filter(|(_, t)| now - t < 2.0);
@@ -329,75 +495,53 @@ impl FretwiseUi {
                 markers.push(Marker { pos: ch.position, color, label, text: Color32::BLACK });
             }
         }
-        fretboard(ui, &self.tuning, 15, &markers);
-
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.button("Skip").clicked() {
-                self.trainer.skip(now);
-            }
-            ui.label(format!(
-                "streak {}   best {}   ✔ {}   × {}",
-                self.trainer.streak, self.trainer.best_streak, self.trainer.correct, self.trainer.wrong
-            ));
-        });
-
-        ui.separator();
-        let before = self.trainer.config;
+        let height = (ui.available_height() - 12.0).clamp(220.0, 360.0);
         let cfg = &mut self.trainer.config;
+        let controls = NeckControls {
+            min_fret: &mut cfg.min_fret,
+            max_fret: &mut cfg.max_fret,
+            strings: &mut cfg.strings,
+        };
+        fretboard(ui, &self.tuning, 15, height, &markers, Some(controls));
+    }
+
+    /// The everyday controls, laid out like a plug-in's front panel.
+    fn trainer_rack(&mut self, ui: &mut egui::Ui, now: f64) {
         ui.horizontal(|ui| {
-            ui.label("Prompt:");
-            ui.selectable_value(&mut cfg.style, PromptStyle::NameOnString, "Note name");
-            ui.selectable_value(&mut cfg.style, PromptStyle::FretboardDot, "Fretboard dot");
-            ui.separator();
-            ui.label("Show as:");
-            ui.selectable_value(&mut cfg.labels, Labels::NoteName, "Notes");
-            ui.selectable_value(&mut cfg.labels, Labels::Degree, "Degrees");
-            ui.separator();
-            ui.checkbox(&mut self.show_pattern, "Show pattern");
-            ui.checkbox(&mut self.chime_enabled, "Sound on correct");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Scale:");
-            egui::ComboBox::from_id_salt("scale_root")
-                .width(50.0)
-                .selected_text(pitch_class_name(cfg.scale.root))
-                .show_ui(ui, |ui| {
-                    for pc in 0..12 {
-                        ui.selectable_value(&mut cfg.scale.root, pc, pitch_class_name(pc));
-                    }
-                });
-            egui::ComboBox::from_id_salt("scale_kind")
-                .selected_text(cfg.scale.kind.name())
-                .show_ui(ui, |ui| {
-                    for k in ScaleKind::ALL {
-                        ui.selectable_value(&mut cfg.scale.kind, k, k.name());
-                    }
-                });
-            ui.separator();
-            ui.label("Order:");
-            ui.selectable_value(&mut cfg.order, Order::Random, "Random");
-            ui.selectable_value(&mut cfg.order, Order::Ascending, "Up");
-            ui.selectable_value(&mut cfg.order, Order::UpDown, "Up & down");
-        });
-        ui.horizontal(|ui| {
-            ui.label("Strings:");
-            for s in (0..6).rev() {
-                let name = format!("{} ({})", string_number(s), self.tuning.strings[s]);
-                ui.checkbox(&mut cfg.strings[s], name);
+            ui.spacing_mut().item_spacing.x = 18.0;
+            let cfg = &mut self.trainer.config;
+            let mut root = cfg.scale.root as usize % 12;
+            let roots: Vec<&str> = (0..12).map(pitch_class_name).collect();
+            if knob(ui, "root", "Key", &mut root, &roots) {
+                cfg.scale.root = root as u8;
             }
+            let mut kind = ScaleKind::ALL.iter().position(|k| *k == cfg.scale.kind).unwrap_or(0);
+            let kinds: Vec<&str> = ScaleKind::ALL.iter().map(|k| k.name()).collect();
+            if knob(ui, "kind", "Scale", &mut kind, &kinds) {
+                cfg.scale.kind = ScaleKind::ALL[kind];
+            }
+            rack_group(ui, "Order", |ui| {
+                segmented(
+                    ui,
+                    &mut cfg.order,
+                    &[(Order::Random, "Random"), (Order::Ascending, "Up"), (Order::UpDown, "Up & down")],
+                    15.0,
+                );
+            });
+            rack_group(ui, "Labels", |ui| {
+                segmented(ui, &mut cfg.labels, &[(Labels::NoteName, "Notes"), (Labels::Degree, "Degrees")], 15.0);
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let skip = egui::Button::new(RichText::new("Skip").size(16.0))
+                    .min_size(egui::vec2(76.0, 40.0))
+                    .fill(ui.visuals().extreme_bg_color)
+                    .corner_radius(8);
+                if ui.add(skip).on_hover_text("Show the answer and move on").clicked() {
+                    self.trainer.skip(now);
+                }
+            });
         });
-        ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut cfg.min_fret, 0..=15).text("from fret"));
-            ui.add(egui::Slider::new(&mut cfg.max_fret, 0..=15).text("to fret"));
-            cfg.max_fret = cfg.max_fret.max(cfg.min_fret);
-        });
-        // Labels and prompt style only change what's shown; don't send a
-        // pattern back to the bottom for them.
-        let display_only = TrainerConfig { labels: before.labels, style: before.style, ..self.trainer.config };
-        if display_only != before {
-            self.trainer.restart(now);
-        }
     }
 
     fn progress_tab(&mut self, ui: &mut egui::Ui) {
@@ -423,7 +567,8 @@ impl FretwiseUi {
                 }
             }
         }
-        fretboard(ui, &self.tuning, 15, &markers);
+        let height = (ui.available_height() - 48.0).clamp(220.0, 360.0);
+        fretboard(ui, &self.tuning, 15, height, &markers, None);
         ui.add_space(8.0);
         if ui.button("Reset progress").clicked() {
             self.trainer.reset_stats();
@@ -431,7 +576,60 @@ impl FretwiseUi {
     }
 }
 
-/// Compact input meter for the host's toolbar.
-pub fn show_level(ui: &mut egui::Ui, reading: &PitchReading) {
-    level_meter(ui, reading.level_db);
+/// Background for the control rack and the settings panel: a shade off the
+/// window, like a plug-in's faceplate.
+fn rack_fill(ui: &egui::Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_gray(36)
+    } else {
+        Color32::from_gray(232)
+    }
+}
+
+/// A small caps caption over a control, as printed on hardware.
+fn rack_group(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.label(RichText::new(title.to_uppercase()).size(11.0).weak());
+        add(ui);
+    });
+}
+
+/// A number with a caption under it, for the score.
+fn readout(ui: &mut egui::Ui, caption: &str, value: u32, color: Color32) {
+    let layout = egui::Layout::top_down(egui::Align::Center);
+    ui.allocate_ui_with_layout(egui::vec2(48.0, 40.0), layout, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.label(RichText::new(value.to_string()).size(20.0).strong().color(color));
+        ui.label(RichText::new(caption.to_uppercase()).size(10.0).weak());
+    });
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(14.0);
+    ui.label(RichText::new(title.to_uppercase()).size(11.0).weak());
+    ui.separator();
+}
+
+fn setting_switch(ui: &mut egui::Ui, on: &mut bool, label: &str) {
+    ui.horizontal(|ui| {
+        toggle(ui, on);
+        ui.label(label);
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_from_before_settings_panel_loads() {
+        let old = r#"{ "tab": "Tuner", "a4": 442.0, "chime": false, "show_pattern": false }"#;
+        let state: UiState = serde_json::from_str(old).unwrap();
+        assert!(!state.settings_open);
+        assert_eq!(state.theme, Theme::System);
+        let ui = FretwiseUi::from_state(state.clone());
+        assert_eq!(ui.state().a4, 442.0);
+        assert_eq!(ui.state(), state);
+    }
 }
