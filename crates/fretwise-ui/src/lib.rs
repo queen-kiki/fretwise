@@ -7,9 +7,10 @@
 mod widgets;
 
 use egui::{Color32, RichText};
-use fretwise_core::theory::{nearest_note, string_number};
+use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
-    Feedback, Note, NoteStabilizer, PitchReading, Position, Progress, PromptStyle, Trainer, TrainerConfig, Tuning,
+    Feedback, Labels, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer,
+    TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -146,7 +147,7 @@ impl FretwiseUi {
         ui.separator();
         if self.tuning != tuning_before {
             self.trainer.tuning = self.tuning;
-            self.trainer.next(now);
+            self.trainer.restart(now);
         }
 
         match self.tab {
@@ -213,42 +214,67 @@ impl FretwiseUi {
         });
     }
 
+    /// A note as prompts and markers show it: "C3", or "b3" in degree mode.
+    fn label(&self, note: Note) -> String {
+        match self.trainer.config.labels {
+            Labels::NoteName => note.to_string(),
+            Labels::Degree => self.trainer.config.scale.degree(note).to_string(),
+        }
+    }
+
+    /// Like [`Self::label`], plus the note name in degree mode, for feedback
+    /// once the answer no longer needs hiding.
+    fn label_full(&self, note: Note) -> String {
+        match self.trainer.config.labels {
+            Labels::NoteName => note.to_string(),
+            Labels::Degree => format!("{} ({note})", self.label(note)),
+        }
+    }
+
     fn trainer_tab(&mut self, ui: &mut egui::Ui, now: f64) {
         let ch = self.trainer.current().copied();
         let held = self.stabilizer.current();
         let style = self.trainer.config.style;
+        let scale = self.trainer.config.scale;
 
         // Prompt
         ui.vertical_centered(|ui| {
             ui.add_space(8.0);
             if let Some(ch) = ch {
+                let what = match self.trainer.config.labels {
+                    Labels::NoteName => ch.note.to_string(),
+                    Labels::Degree => format!("degree {}", self.label(ch.note)),
+                };
                 let text = match style {
                     PromptStyle::NameOnString => format!(
                         "Play {} on string {} ({})",
-                        ch.note,
+                        what,
                         string_number(ch.position.string),
                         self.tuning.strings[ch.position.string],
                     ),
                     PromptStyle::FretboardDot => "Play the marked note".to_string(),
                 };
                 ui.label(RichText::new(text).size(32.0).strong());
+                if scale.kind != ScaleKind::Chromatic {
+                    ui.label(RichText::new(scale.name()).size(16.0).weak());
+                }
             } else {
-                ui.label(RichText::new("No positions selected — enable a string below").size(20.0));
+                ui.label(RichText::new("Nothing to play — check the strings, frets and scale below").size(20.0));
             }
 
             let fb = self.trainer.feedback().filter(|(_, t)| now - t < 2.0);
             let line = match fb {
                 Some((Feedback::Correct { note, seconds }, _)) => {
-                    RichText::new(format!("✔ {note} in {seconds:.1}s")).color(GOOD)
+                    RichText::new(format!("✔ {} in {seconds:.1}s", self.label_full(note))).color(GOOD)
                 }
                 Some((Feedback::Wrong { played, .. }, _)) => {
-                    RichText::new(format!("✘ that was {played}")).color(BAD)
+                    RichText::new(format!("✘ that was {}", self.label_full(played))).color(BAD)
                 }
                 Some((Feedback::Skipped { expected }, _)) => {
-                    RichText::new(format!("skipped — it was {expected}")).weak()
+                    RichText::new(format!("skipped — it was {}", self.label_full(expected))).weak()
                 }
                 None => RichText::new(match held {
-                    Some(h) => format!("hearing {}", h.note),
+                    Some(h) => format!("hearing {}", self.label(h.note)),
                     None => " ".to_string(),
                 })
                 .weak(),
@@ -261,14 +287,14 @@ impl FretwiseUi {
         let mut markers = Vec::new();
         if let Some(h) = held {
             for pos in self.tuning.positions_of(h.note, 15) {
-                markers.push(Marker { pos, color: HEARD.gamma_multiply(0.5), label: Some(h.note.to_string()) });
+                markers.push(Marker { pos, color: HEARD.gamma_multiply(0.5), label: Some(self.label(h.note)) });
             }
         }
         if let Some(ch) = ch {
             let show_target = style == PromptStyle::FretboardDot || self.trainer.is_resolved();
             if show_target {
                 let color = if self.trainer.is_resolved() { GOOD } else { TARGET };
-                let label = self.trainer.is_resolved().then(|| ch.note.to_string());
+                let label = self.trainer.is_resolved().then(|| self.label(ch.note));
                 markers.push(Marker { pos: ch.position, color, label });
             }
         }
@@ -293,9 +319,34 @@ impl FretwiseUi {
             ui.selectable_value(&mut cfg.style, PromptStyle::NameOnString, "Note name");
             ui.selectable_value(&mut cfg.style, PromptStyle::FretboardDot, "Fretboard dot");
             ui.separator();
-            ui.checkbox(&mut cfg.naturals_only, "Naturals only");
+            ui.label("Show as:");
+            ui.selectable_value(&mut cfg.labels, Labels::NoteName, "Notes");
+            ui.selectable_value(&mut cfg.labels, Labels::Degree, "Degrees");
             ui.separator();
             ui.checkbox(&mut self.chime_enabled, "Sound on correct");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Scale:");
+            egui::ComboBox::from_id_salt("scale_root")
+                .width(50.0)
+                .selected_text(pitch_class_name(cfg.scale.root))
+                .show_ui(ui, |ui| {
+                    for pc in 0..12 {
+                        ui.selectable_value(&mut cfg.scale.root, pc, pitch_class_name(pc));
+                    }
+                });
+            egui::ComboBox::from_id_salt("scale_kind")
+                .selected_text(cfg.scale.kind.name())
+                .show_ui(ui, |ui| {
+                    for k in ScaleKind::ALL {
+                        ui.selectable_value(&mut cfg.scale.kind, k, k.name());
+                    }
+                });
+            ui.separator();
+            ui.label("Order:");
+            ui.selectable_value(&mut cfg.order, Order::Random, "Random");
+            ui.selectable_value(&mut cfg.order, Order::Ascending, "Up");
+            ui.selectable_value(&mut cfg.order, Order::UpDown, "Up & down");
         });
         ui.horizontal(|ui| {
             ui.label("Strings:");
@@ -309,8 +360,11 @@ impl FretwiseUi {
             ui.add(egui::Slider::new(&mut cfg.max_fret, 0..=15).text("to fret"));
             cfg.max_fret = cfg.max_fret.max(cfg.min_fret);
         });
-        if self.trainer.config != before {
-            self.trainer.next(now);
+        // Labels and prompt style only change what's shown; don't send a
+        // pattern back to the bottom for them.
+        let display_only = TrainerConfig { labels: before.labels, style: before.style, ..self.trainer.config };
+        if display_only != before {
+            self.trainer.restart(now);
         }
     }
 

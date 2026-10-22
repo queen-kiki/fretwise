@@ -20,4 +20,6 @@ pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};
-pub use trainer::{Challenge, Feedback, PositionStats, Progress, PromptStyle, Trainer, TrainerConfig};
+pub use trainer::{
+    Challenge, Feedback, Labels, Order, PositionStats, Progress, PromptStyle, Trainer, TrainerConfig,
+};

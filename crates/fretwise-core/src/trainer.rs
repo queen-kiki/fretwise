@@ -1,10 +1,14 @@
 //! Fretboard note trainer: asks for a note at a position, listens for it,
-//! keeps per-position stats, and asks more often about the spots you're weak on.
+//! and keeps per-position stats. Notes come from a scale, either in random
+//! order (favouring the spots you're weak on) or walked up and down as a
+//! pattern. Plain note-finding is the chromatic scale (or C major for
+//! naturals only) in random order.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::scale::Scale;
 use crate::theory::{Note, Position, Tuning};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +19,25 @@ pub enum PromptStyle {
     FretboardDot,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Order {
+    /// Weighted towards positions that are slow or missed.
+    Random,
+    /// Low to high through the scale, then start over.
+    Ascending,
+    /// Low to high and back down.
+    UpDown,
+}
+
+/// How prompts and markers name notes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Labels {
+    /// "C3"
+    NoteName,
+    /// "b3", relative to the scale's root.
+    Degree,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TrainerConfig {
@@ -22,7 +45,10 @@ pub struct TrainerConfig {
     pub max_fret: u8,
     /// Which strings to quiz, lowest first.
     pub strings: [bool; 6],
-    pub naturals_only: bool,
+    /// Which notes to ask for. C major is the natural notes.
+    pub scale: Scale,
+    pub order: Order,
+    pub labels: Labels,
     pub style: PromptStyle,
 }
 
@@ -32,7 +58,9 @@ impl Default for TrainerConfig {
             min_fret: 0,
             max_fret: 12,
             strings: [true; 6],
-            naturals_only: true,
+            scale: Scale::default(),
+            order: Order::Random,
+            labels: Labels::NoteName,
             style: PromptStyle::NameOnString,
         }
     }
@@ -135,6 +163,8 @@ pub struct Trainer {
     /// The previous challenge's note, if it was answered correctly. Picking it
     /// again during the next challenge is ignored rather than counted wrong.
     repick: Option<Note>,
+    /// Steps taken through the pattern in [`Order::Ascending`]/[`Order::UpDown`].
+    seq_step: usize,
     rng: u64,
     pub streak: u32,
     pub best_streak: u32,
@@ -153,6 +183,7 @@ impl Trainer {
             advance_at: None,
             last_judged: None,
             repick: None,
+            seq_step: 0,
             rng: seed | 1,
             streak: 0,
             best_streak: 0,
@@ -214,7 +245,7 @@ impl Trainer {
             }
             for fret in c.min_fret..=c.max_fret.max(c.min_fret) {
                 let pos = Position { string, fret };
-                if c.naturals_only && !self.tuning.note_at(pos).is_natural() {
+                if !c.scale.contains(self.tuning.note_at(pos)) {
                     continue;
                 }
                 out.push(pos);
@@ -223,37 +254,76 @@ impl Trainer {
         out
     }
 
-    /// Pick the next challenge, favouring positions that are slow or missed.
+    /// The scale's positions in pitch order, one per pitch: where a pitch is
+    /// on two strings, the lower fret wins, keeping the pattern in position.
+    pub fn sequence(&self) -> Vec<Position> {
+        let tuning = self.tuning;
+        let mut seq = self.candidates();
+        seq.sort_by_key(|&p| (tuning.note_at(p), p.fret));
+        seq.dedup_by_key(|p| tuning.note_at(*p));
+        seq
+    }
+
+    /// Start over, e.g. after the settings changed: patterns begin again
+    /// from the bottom.
+    pub fn restart(&mut self, now: f64) {
+        self.current = None;
+        self.advance_at = None;
+        self.seq_step = 0;
+        self.next(now);
+    }
+
+    /// Move on to the next challenge.
     pub fn next(&mut self, now: f64) {
         let prev_note = self.current.map(|c| c.note);
         // `advance_at` is only set after a correct answer.
         self.repick = self.advance_at.take().and(prev_note);
+        let chosen = match self.config.order {
+            Order::Random => self.pick_random(prev_note),
+            Order::Ascending | Order::UpDown => self.pick_in_sequence(),
+        };
+        self.current = chosen.map(|position| Challenge {
+            position,
+            note: self.tuning.note_at(position),
+            started: now,
+            misses: 0,
+        });
+    }
+
+    fn pick_random(&mut self, prev_note: Option<Note>) -> Option<Position> {
         let mut pool = self.candidates();
         // Never repeat the note that may still be ringing.
         if pool.iter().any(|&p| Some(self.tuning.note_at(p)) != prev_note) {
             pool.retain(|&p| Some(self.tuning.note_at(p)) != prev_note);
         }
         if pool.is_empty() {
-            self.current = None;
-            return;
+            return None;
         }
         let weights: Vec<f64> = pool.iter().map(|&p| self.weight(p)).collect();
         let total: f64 = weights.iter().sum();
         let mut pick = self.next_f64() * total;
-        let mut chosen = pool[pool.len() - 1];
         for (&p, &w) in pool.iter().zip(&weights) {
             if pick < w {
-                chosen = p;
-                break;
+                return Some(p);
             }
             pick -= w;
         }
-        self.current = Some(Challenge {
-            position: chosen,
-            note: self.tuning.note_at(chosen),
-            started: now,
-            misses: 0,
-        });
+        pool.last().copied()
+    }
+
+    fn pick_in_sequence(&mut self) -> Option<Position> {
+        let mut cycle = self.sequence();
+        if self.config.order == Order::UpDown && cycle.len() > 2 {
+            // a b c d → a b c d c b, then a again.
+            let down: Vec<Position> = cycle[1..cycle.len() - 1].iter().rev().copied().collect();
+            cycle.extend(down);
+        }
+        if cycle.is_empty() {
+            return None;
+        }
+        let p = cycle[self.seq_step % cycle.len()];
+        self.seq_step += 1;
+        Some(p)
     }
 
     pub fn skip(&mut self, now: f64) {
@@ -422,11 +492,42 @@ mod tests {
     }
 
     #[test]
+    fn up_down_walks_the_pattern() {
+        use crate::scale::ScaleKind;
+        let mut t = trainer();
+        // A minor pentatonic, box 1.
+        t.config.scale = Scale { root: 9, kind: ScaleKind::MinorPentatonic };
+        t.config.min_fret = 5;
+        t.config.max_fret = 8;
+        t.config.order = Order::UpDown;
+        t.restart(0.0);
+
+        let seq = t.sequence();
+        let names: Vec<String> = seq.iter().map(|&p| t.tuning.note_at(p).to_string()).collect();
+        assert_eq!(names, ["A2", "C3", "D3", "E3", "G3", "A3", "C4", "D4", "E4", "G4", "A4", "C5"]);
+
+        let mut played = Vec::new();
+        let mut now = 0.0;
+        for _ in 0..(2 * seq.len() - 1) {
+            let ch = *t.current().unwrap();
+            played.push(ch.position);
+            now += 1.0;
+            t.update(now, Some(ch.note));
+            t.update(now + 0.7, None);
+        }
+        let mut expected = seq.clone();
+        expected.extend(seq[1..seq.len() - 1].iter().rev());
+        expected.push(seq[0]);
+        assert_eq!(played, expected);
+        assert_eq!(t.wrong, 0);
+    }
+
+    #[test]
     fn candidates_respect_config() {
         let mut t = trainer();
         t.config.strings = [false, false, false, false, false, true];
         t.config.max_fret = 5;
-        t.config.naturals_only = true;
+        t.config.scale = Scale::default();
         // High E, frets 0..=5 naturals: E F G A
         assert_eq!(t.candidates().len(), 4);
     }
