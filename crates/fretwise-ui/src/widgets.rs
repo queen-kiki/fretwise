@@ -34,7 +34,8 @@ pub struct NeckControls<'a> {
     pub min_fret: &'a mut u8,
     pub max_fret: &'a mut u8,
     /// Strings to quiz, lowest first; toggled by clicking their names.
-    pub strings: &'a mut [bool; 6],
+    /// `None` leaves the names as plain labels.
+    pub strings: Option<&'a mut [bool; 6]>,
 }
 
 /// Horizontal fretboard, high E on top like tab. Frets are evenly spaced
@@ -67,10 +68,12 @@ pub fn fretboard(
     let top = rect.top() + strip_h + pad;
     let bottom = rect.bottom() - pad;
     let nut_x = rect.left() + label_w + open_w;
-    let fret_w = (rect.right() - 8.0 - nut_x) / frets as f32;
+    let fret_w = (rect.right() - nut_x) / frets as f32;
     let spacing = (bottom - top) / 5.0;
     let board_end = nut_x + frets as f32 * fret_w;
     let radius = (spacing * 0.42).min(fret_w * 0.42).min(max_radius);
+    let geometry = NeckGeometry { nut_x, open_w, fret_w, top, spacing };
+    ui.ctx().data_mut(|d| d.insert_temp(Id::new("fretwise_neck_geometry"), geometry));
 
     let string_y = |s: usize| top + (5 - s) as f32 * spacing;
     let fret_center = |f: u8| {
@@ -108,14 +111,15 @@ pub fn fretboard(
         let x = fret_center(f);
         let mid = (top + bottom) / 2.0;
         // Same colour as the nut, so the inlays read as part of the neck.
-        let inlay = text;
+        // Thin rings, so they read as markings on the wood, not as notes.
+        let inlay = Stroke::new(1.5_f32, text);
         match f % 12 {
             3 | 5 | 7 | 9 => {
-                painter.circle_filled(pos2(x, mid), 6.0, inlay);
+                painter.circle_stroke(pos2(x, mid), 5.0, inlay);
             }
             0 => {
-                painter.circle_filled(pos2(x, mid - spacing), 6.0, inlay);
-                painter.circle_filled(pos2(x, mid + spacing), 6.0, inlay);
+                painter.circle_stroke(pos2(x, mid - spacing), 5.0, inlay);
+                painter.circle_stroke(pos2(x, mid + spacing), 5.0, inlay);
             }
             _ => {}
         }
@@ -130,7 +134,7 @@ pub fn fretboard(
 
     let mut changed = false;
     let (range, strings) = match controls {
-        Some(c) => (Some((c.min_fret, c.max_fret)), Some(c.strings)),
+        Some(c) => (Some((c.min_fret, c.max_fret)), c.strings),
         None => (None, None),
     };
 
@@ -141,7 +145,7 @@ pub fn fretboard(
         let on = strings.as_ref().is_none_or(|st| st[s]);
         let thickness = 1.0 + (5 - s) as f32 * 0.4;
         let color = if on { line } else { line.gamma_multiply(0.3) };
-        painter.line_segment([pos2(nut_x - open_w, y), pos2(rect.right() - 8.0, y)], Stroke::new(thickness, color));
+        painter.line_segment([pos2(nut_x - open_w, y), pos2(rect.right(), y)], Stroke::new(thickness, color));
 
         let name_rect = Rect::from_center_size(pos2(rect.left() + label_w / 2.0, y), vec2(label_w - 4.0, 24.0));
         let mut name_color = text;
@@ -207,7 +211,9 @@ pub fn fretboard(
             painter.circle_filled(c, radius * m.size, m.color);
         }
         if let Some(label) = &m.label {
-            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * m.size * 0.8), m.text);
+            // Finger numbers and other short labels get bigger digits.
+            let scale = if label.chars().count() <= 2 { 1.1 } else { 0.8 };
+            painter.text(c, Align2::CENTER_CENTER, label, FontId::proportional(radius * m.size * scale), m.text);
         }
     }
     changed
@@ -388,7 +394,8 @@ pub fn knob(ui: &mut Ui, id_salt: impl Hash, title: &str, index: &mut usize, cho
     // Track and value arc, and a dot per step.
     painter.add(egui::Shape::line(arc(0.0, 1.0, r + 7.0), Stroke::new(3.0_f32, visuals.extreme_bg_color)));
     // The value arc runs blue → pink → white, the trans flag from edge to middle.
-    let steps = 24;
+    // Nothing to draw at the first step; zero-length segments still show a blip.
+    let steps = if t > 0.0 { 24 } else { 0 };
     for i in 0..steps {
         let (a, b) = (t * i as f32 / steps as f32, t * (i + 1) as f32 / steps as f32);
         let color = crate::theme::pride_gradient((a + b) / 2.0);
@@ -550,12 +557,14 @@ pub fn level_meter(ui: &mut Ui, level_db: f32) -> Response {
     let lit = ((level_db + 60.0) / 60.0).clamp(0.0, 1.0) * segments as f32;
     for i in 0..segments {
         let db = -60.0 + 60.0 * (i as f32 + 1.0) / segments as f32;
+        // Healthy signal runs through the flag colours; yellow and red still
+        // warn near clipping.
         let color = if db > -3.0 {
             Color32::from_rgb(230, 90, 80)
         } else if db > -12.0 {
             Color32::from_rgb(240, 190, 70)
         } else {
-            Color32::from_rgb(80, 200, 120)
+            crate::theme::pride_gradient((db + 60.0) / 48.0)
         };
         let on = (i as f32) < lit.round();
         let x = rect.left() + i as f32 * (w + gap);
@@ -642,4 +651,233 @@ pub fn dropdown<T: PartialEq + Copy>(
         });
     });
     *value != before
+}
+
+/// The trainer's main action: a square accent button with a painted
+/// skip-forward icon (two triangles and a bar).
+pub fn skip_button(ui: &mut Ui, size: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    let hot = response.hovered();
+    let fill = if response.is_pointer_button_down_on() {
+        accent(ui).gamma_multiply(0.8)
+    } else if hot {
+        crate::theme::lerp(accent(ui), Color32::WHITE, 0.15)
+    } else {
+        accent(ui)
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 8.0, fill);
+    let ink = ui.visuals().selection.stroke.color;
+    let c = rect.center();
+    let h = size * 0.17;
+    let w = size * 0.15;
+    for dx in [-w, 0.0] {
+        let x = c.x + dx - w * 0.5;
+        painter.add(egui::Shape::convex_polygon(
+            vec![pos2(x, c.y - h), pos2(x + w, c.y), pos2(x, c.y + h)],
+            ink,
+            Stroke::NONE,
+        ));
+    }
+    let bar = Rect::from_min_size(pos2(c.x + w * 0.5 + 1.0, c.y - h), vec2(size * 0.05, 2.0 * h));
+    painter.rect_filled(bar, 1.0, ink);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// A painted gear: a toothed ring with a hole, brighter when hovered or on.
+pub fn gear_button(ui: &mut Ui, on: bool) -> Response {
+    let size = 26.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    let visuals = ui.visuals();
+    let color = if on {
+        accent(ui)
+    } else if response.hovered() {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+    let painter = ui.painter();
+    let c = rect.center();
+    let teeth = 8;
+    for i in 0..teeth {
+        let a = i as f32 / teeth as f32 * std::f32::consts::TAU;
+        let dir = vec2(a.cos(), a.sin());
+        painter.line_segment([c + dir * 6.0, c + dir * 11.0], Stroke::new(4.0_f32, color));
+    }
+    painter.circle_filled(c, 8.5, color);
+    painter.circle_filled(c, 3.5, ui.visuals().panel_fill);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// A quiet painted button in the dropdown's sunken style.
+pub fn plain_button(ui: &mut Ui, text: &str, text_size: f32) -> Response {
+    let font = FontId::proportional(text_size);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, Color32::PLACEHOLDER);
+    let size = galley.size() + vec2(text_size * 1.8, text_size * 0.9);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let visuals = ui.visuals();
+    let hot = response.hovered();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 8.0, visuals.extreme_bg_color);
+    if hot {
+        painter.rect_stroke(rect.shrink(1.0), 7.0, Stroke::new(1.5_f32, accent(ui)), StrokeKind::Inside);
+    }
+    let color = if hot { visuals.strong_text_color() } else { visuals.text_color() };
+    painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// Where the last-drawn neck put things, so overlays can find a position.
+#[derive(Clone, Copy)]
+struct NeckGeometry {
+    nut_x: f32,
+    open_w: f32,
+    fret_w: f32,
+    top: f32,
+    spacing: f32,
+}
+
+fn neck_geometry(ctx: &egui::Context) -> Option<NeckGeometry> {
+    ctx.data(|d| d.get_temp::<NeckGeometry>(Id::new("fretwise_neck_geometry")))
+}
+
+/// Screen point of `pos` on the neck drawn most recently.
+pub fn neck_point(ctx: &egui::Context, pos: Position) -> Option<egui::Pos2> {
+    let g = neck_geometry(ctx)?;
+    let x = if pos.fret == 0 { g.nut_x - g.open_w / 2.0 } else { g.nut_x + (pos.fret as f32 - 0.5) * g.fret_w };
+    Some(pos2(x, g.top + (5 - pos.string.min(5)) as f32 * g.spacing))
+}
+
+/// A burst of four-point sparkles in the flag colours, `age` seconds after
+/// it started; done after about a second.
+pub fn sparkles(painter: &egui::Painter, origin: egui::Pos2, age: f32) {
+    let life = 0.9;
+    if !(0.0..life).contains(&age) {
+        return;
+    }
+    let t = age / life;
+    let colors = [crate::theme::TRANS_BLUE, crate::theme::TRANS_PINK, Color32::WHITE];
+    for i in 0..14 {
+        // A fixed spread per index: the same burst every time, no RNG needed.
+        let a = i as f32 * 2.399 + 0.3;
+        let speed = 70.0 + (i * 37 % 50) as f32;
+        let d = vec2(a.cos(), a.sin()) * speed * t + vec2(0.0, 60.0 * t * t);
+        let size = (5.0 + (i % 3) as f32 * 2.0) * (1.0 - t);
+        let color = colors[i % 3].gamma_multiply(1.0 - t * t);
+        let c = origin + d;
+        for (w, h) in [(size * 0.3, size), (size, size * 0.3)] {
+            painter.add(egui::Shape::convex_polygon(
+                vec![c + vec2(0.0, -h), c + vec2(w, 0.0), c + vec2(0.0, h), c + vec2(-w, 0.0)],
+                color,
+                Stroke::NONE,
+            ));
+        }
+    }
+}
+
+/// Header tools, painted to match the gear.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Icon {
+    /// Free practice: an eighth note.
+    Practice,
+    /// Tuner: a gauge with a needle.
+    Tuner,
+    /// Stats: three bars.
+    Stats,
+    /// Back to Learn: a chevron.
+    Back,
+}
+
+pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
+    let size = 26.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    let visuals = ui.visuals();
+    let color = if on {
+        accent(ui)
+    } else if response.hovered() {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+    let painter = ui.painter();
+    let c = rect.center();
+    let stroke = Stroke::new(2.5_f32, color);
+    match icon {
+        Icon::Practice => {
+            painter.circle_filled(c + vec2(-3.5, 6.0), 4.5, color);
+            painter.line_segment([c + vec2(0.5, 6.0), c + vec2(0.5, -9.0)], stroke);
+            painter.line_segment([c + vec2(0.5, -9.0), c + vec2(7.0, -4.0)], stroke);
+        }
+        Icon::Tuner => {
+            let pivot = c + vec2(0.0, 6.0);
+            let arc: Vec<egui::Pos2> = (0..=16)
+                .map(|i| {
+                    let a = PI + PI * i as f32 / 16.0;
+                    pivot + vec2(a.cos(), a.sin()) * 11.0
+                })
+                .collect();
+            painter.add(egui::Shape::line(arc, stroke));
+            painter.line_segment([pivot, pivot + vec2(5.0, -8.0)], stroke);
+            painter.circle_filled(pivot, 2.5, color);
+        }
+        Icon::Stats => {
+            for (i, h) in [7.0, 12.0, 17.0].iter().enumerate() {
+                let x = c.x - 8.0 + i as f32 * 6.5;
+                let bar = Rect::from_min_max(pos2(x, c.y + 9.0 - h), pos2(x + 4.0, c.y + 9.0));
+                painter.rect_filled(bar, 1.0, color);
+            }
+        }
+        Icon::Back => {
+            let thick = Stroke::new(3.0_f32, color);
+            painter.line_segment([c + vec2(4.0, -8.0), c + vec2(-4.0, 0.0)], thick);
+            painter.line_segment([c + vec2(-4.0, 0.0), c + vec2(4.0, 8.0)], thick);
+        }
+    }
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// A little flame for the streak: a pink teardrop with a warm core.
+pub fn flame(painter: &egui::Painter, c: egui::Pos2, h: f32) {
+    let drop = |scale: f32, color: Color32| {
+        let pts: Vec<egui::Pos2> = (0..24)
+            .map(|i| {
+                let a = i as f32 / 24.0 * std::f32::consts::TAU;
+                let (sx, sy) = (a.sin(), a.cos());
+                // A circle drawn out into a point at the top.
+                let up = (-sy).max(0.0);
+                // Narrower and taller towards the top; stays convex.
+                let x = sx * h * 0.32 * scale * (1.0 - 0.5 * up);
+                let y = -sy * h * 0.32 * scale * (1.0 + 1.0 * up);
+                // The core sits low, like the hottest part of a flame.
+                c + vec2(x, y + h * 0.16 * (1.0 - scale))
+            })
+            .collect();
+        painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
+    };
+    drop(1.0, Color32::from_rgb(255, 120, 150));
+    drop(0.5, Color32::from_rgb(255, 214, 120));
+}
+
+/// Today's session as one bar: done over done + still to go, filled with
+/// the flag gradient.
+pub fn session_bar(ui: &mut Ui, done: usize, to_go: usize) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(220.0, 12.0), Sense::hover());
+    let total = done + to_go;
+    let t = if total == 0 { 1.0 } else { done as f32 / total as f32 };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
+    if t > 0.0 {
+        // Clip a full-width gradient to the filled part, so the colours
+        // stay put as the bar grows.
+        let filled = Rect::from_min_size(rect.min, vec2(rect.width() * t, rect.height()));
+        let clipped = painter.with_clip_rect(filled.intersect(painter.clip_rect()));
+        let steps = 32;
+        for i in 0..steps {
+            let x0 = rect.left() + rect.width() * i as f32 / steps as f32;
+            let x1 = rect.left() + rect.width() * (i + 1) as f32 / steps as f32;
+            let seg = Rect::from_min_max(pos2(x0, rect.top()), pos2(x1 + 0.5, rect.bottom()));
+            clipped.rect_filled(seg, 0.0, crate::theme::pride_gradient(i as f32 / steps as f32));
+        }
+    }
+    response.on_hover_text(format!("{done} done this session, {to_go} still to review or new"))
 }
