@@ -13,8 +13,28 @@ Guitar learning app for electric guitar through an audio interface.
 cargo run --release
 ```
 
-Pick the interface and the input channel your guitar is plugged into in the
-top bar. Watch the level meter: it should move when you play.
+Open settings with the ⚙ button (top right), and pick the interface and the
+input your guitar is plugged into. Watch the IN meter next to it: it should
+move when you play.
+
+## Using the trainer
+
+- **Key** and **Scale** knobs: drag up/down, scroll, or click for a list.
+- **Order** and **Labels**: Random / Up / Up & down, and note names or scale
+  degrees.
+- **Fret range**: drag the lit strip of fret numbers under the neck. Drag an
+  end to resize it, drag the middle to move it, or click a fret outside it.
+- **Strings**: click a string name left of the neck to leave it out.
+- Everything else (audio device, tuning, A4, prompt style, scale pattern,
+  chime, theme) is in the ⚙ settings panel. Esc closes it.
+
+## UI widgets
+
+The knobs, segmented buttons, switches, LED meter and fretboard are painted
+with plain egui in `crates/fretwise-ui/src/widgets.rs`; no image assets are
+bundled. Existing egui knob crates were considered but target newer egui
+than the 0.31 this workspace pins (to match `nih_plug_egui`): `egui_knob`
+0.6 needs egui 0.36, `armas-audio` 0.2 needs 0.33.
 
 ### ASIO (optional)
 
