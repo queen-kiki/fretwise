@@ -621,6 +621,18 @@ mod tests {
     }
 
     #[test]
+    fn a_skipped_card_counts_as_due_once_its_step_is_up() {
+        let cfg = LearnConfig { deck: DeckKind::by_id("basic-chords").unwrap(), ..Default::default() };
+        let mut t = LearnTrainer::new(Tuning::STANDARD, cfg, 5);
+        let total = t.deck_cards().len();
+        let now = unix_seconds(0.0);
+        t.select_card(LearnCard::Chord(ChordKind::by_id("em-open").unwrap()), now);
+        t.skip(now);
+        assert_eq!(t.deck_counts(now + 1.0), (0, total - 1, 0));
+        assert_eq!(t.deck_counts(now + 31.0), (1, total - 1, 0));
+    }
+
+    #[test]
     fn shared_card_progress_carries_across_overlapping_decks() {
         let mut t = LearnTrainer::new(Tuning::STANDARD, LearnConfig::default(), 7);
         t.cards.insert("chord:em-open".into(), SrsCard::default().review(Grade::Easy, 1000.0));

@@ -96,9 +96,10 @@ impl SrsCard {
         self.reps >= 2 && self.interval >= 120.0
     }
 
-    /// True when the card has been reviewed at least once and its due time has passed.
+    /// True when the card has been reviewed at least once and its due time
+    /// has passed, including a card that lapsed back to the first step.
     pub fn is_due(&self, unix_now: f64) -> bool {
-        self.reps > 0 && self.due <= unix_now
+        self.due > 0.0 && self.due <= unix_now
     }
 
     /// Apply a review grade at `unix_now`, returning the new card state.
@@ -219,6 +220,9 @@ mod tests {
         assert_eq!(c.reps, 0);
         assert_eq!(c.interval, 30.0);
         assert!(!c.is_memorized());
+        // A lapsed card is due again once its 30 s are up.
+        assert!(!c.is_due(1820.0));
+        assert!(c.is_due(1830.0));
     }
 
     #[test]
