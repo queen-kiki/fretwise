@@ -337,7 +337,11 @@ impl LearnTrainer {
     }
 
     /// Override the most recent completed card's Anki grade (`1` Again .. `4` Easy).
+    /// Only in the pause after a completed card; returns whether it did.
     pub fn regrade(&mut self, grade: Grade, now: f64) -> bool {
+        if !self.is_resolved() {
+            return false;
+        }
         let Some((key, before, unix_t)) = self.last_review.clone() else {
             return false;
         };
@@ -347,9 +351,7 @@ impl LearnTrainer {
             *g = grade;
             *interval = reviewed.interval;
         }
-        if self.advance_at.is_some() {
-            self.advance_at = Some(now + REGRADE_DELAY);
-        }
+        self.advance_at = Some(now + REGRADE_DELAY);
         true
     }
 
@@ -588,6 +590,12 @@ mod tests {
 
         // Override grade with Hard (key 2).
         assert!(t.regrade(Grade::Hard, now));
+        assert_eq!(t.card_state(&key).interval, 60.0);
+
+        // Once the next card is up, the keys leave the last one alone.
+        t.update(now + 5.0, &empty, None, 440.0);
+        assert!(!t.is_resolved());
+        assert!(!t.regrade(Grade::Easy, now + 5.1));
         assert_eq!(t.card_state(&key).interval, 60.0);
     }
 
