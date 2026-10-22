@@ -11,9 +11,11 @@ pub mod chime;
 pub mod chord;
 pub mod fft;
 pub mod fingering;
+pub mod learn;
 pub mod pitch;
 pub mod poly;
 pub mod scale;
+pub mod srs;
 pub mod stabilizer;
 pub mod theory;
 pub mod trainer;
@@ -25,8 +27,12 @@ pub use chord::{
     ChordTrainerConfig, ChordVoicing,
 };
 pub use fingering::fingering;
+pub use learn::{
+    ActiveCard, GuideMode, LearnCard, LearnConfig, LearnDeck, LearnFeedback, LearnProgress, LearnTrainer,
+};
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};
+pub use srs::{format_interval, Grade, SrsCard};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};
 pub use trainer::{

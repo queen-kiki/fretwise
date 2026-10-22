@@ -1,0 +1,670 @@
+//! "Learn" mode: Anki-style spaced repetition (SM-2) across scales (walked as
+//! a whole pattern from bottom to top) and chords.
+//!
+//! Each card is either a scale run (for the chosen key + fret range) or a
+//! chord voicing from the chosen curriculum. Cards are scheduled with SM-2
+//! intervals (`30s` → `2m` → `10m` → hours/days), auto-graded hands-free from
+//! speed and misses, and overridable with keys `1`–`4` (`Again`, `Hard`,
+//! `Good`, `Easy`) during the post-answer pause. Once a card matures
+//! ([`SrsCard::is_memorized`]), its fretboard diagram/pattern is hidden by
+//! default (`GuideMode::Auto`) so you recall the shape from memory.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::analyzer::PitchReading;
+use crate::chord::{ChordSetKind, ChordVoicing};
+use crate::scale::{Scale, ScaleKind};
+use crate::srs::{unix_seconds, Grade, SrsCard};
+use crate::theory::{nearest_note, Note, Position, Tuning};
+
+/// What the Learn deck quizzes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LearnDeck {
+    /// Both scales (in the chosen key/position) and chords from the chosen curriculum.
+    Both,
+    /// Only scale runs (one card per scale in the chosen key & fret range).
+    Scales,
+    /// Only chords from the chosen curriculum.
+    Chords,
+}
+
+/// Whether to show the scale pattern / chord diagram on the fretboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GuideMode {
+    /// Show the shape while a card is new or learning; hide it once memorized.
+    Auto,
+    /// Always show the shape on the neck.
+    Show,
+    /// Always hide the shape until the card is completed or missed.
+    Hide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LearnConfig {
+    pub deck: LearnDeck,
+    /// Root pitch class (0 = C) for scale cards.
+    pub root: u8,
+    /// Fret range for scale cards (e.g. `5..=8` for a single position box).
+    pub min_fret: u8,
+    pub max_fret: u8,
+    /// Which chord curriculum to include when `deck` is `Chords` or `Both`.
+    pub chord_set: ChordSetKind,
+    /// Whether to show the scale pattern / chord diagram on the neck.
+    pub guide: GuideMode,
+}
+
+impl Default for LearnConfig {
+    fn default() -> Self {
+        Self {
+            deck: LearnDeck::Both,
+            root: 9, // A
+            min_fret: 5,
+            max_fret: 8,
+            chord_set: ChordSetKind::default(),
+            guide: GuideMode::Auto,
+        }
+    }
+}
+
+/// One Anki card in the active deck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LearnCard {
+    Scale(Scale),
+    /// Index into `config.chord_set.chords()`.
+    Chord(usize),
+}
+
+impl LearnCard {
+    pub fn key(self, chord_set: ChordSetKind) -> String {
+        match self {
+            LearnCard::Scale(s) => format!("scale:{}:{}", s.root % 12, s.kind.id()),
+            LearnCard::Chord(idx) => {
+                let id = chord_set.chords().get(idx).map_or("unknown", |c| c.id.as_str());
+                format!("chord:{id}")
+            }
+        }
+    }
+}
+
+/// Live state of the card currently on stage.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ActiveCard {
+    Scale {
+        scale: Scale,
+        /// The full untrimmed positions in the fret range (for hand-position fingering).
+        box_positions: Vec<Position>,
+        /// The pitch-ordered sequence of notes to play from bottom to top.
+        sequence: Vec<Position>,
+        /// Index into `sequence` of the next note to play.
+        step: usize,
+        started: f64,
+        misses: u32,
+    },
+    Chord {
+        index: usize,
+        started: f64,
+        heard_classes: u16,
+        heard_strings: u8,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LearnFeedback {
+    Completed {
+        title: String,
+        seconds: f64,
+        grade: Grade,
+        interval: f64,
+    },
+    WrongNote {
+        played: Note,
+        expected: Note,
+    },
+    Skipped {
+        title: String,
+    },
+}
+
+/// Saved SM-2 progress for the Learn tab.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LearnProgress {
+    /// Card key (`"scale:9:minor-pentatonic"` or `"chord:em-open"`) -> SM-2 card state.
+    pub cards: HashMap<String, SrsCard>,
+    pub reviewed: u32,
+    pub streak: u32,
+    pub best_streak: u32,
+}
+
+const STRUM_WINDOW: f64 = 1.4;
+const POLY_HOLD: f64 = 0.08;
+const CHORD_GATE_DB: f32 = -45.0;
+
+pub struct LearnTrainer {
+    pub config: LearnConfig,
+    pub tuning: Tuning,
+    current: Option<ActiveCard>,
+    cards: HashMap<String, SrsCard>,
+    feedback: Option<(LearnFeedback, f64)>,
+    /// `(card_key, card_before_review, unix_now)` so keys `1`–`4` can re-grade
+    /// during the post-completion pause.
+    last_review: Option<(String, SrsCard, f64)>,
+    advance_at: Option<f64>,
+    last_judged: Option<Note>,
+    repick: Option<Note>,
+    poly_since: [Option<f64>; 12],
+    class_seen_at: [f64; 12],
+    ringing_mask: u16,
+    last_voiced: f64,
+    rng: u64,
+    pub reviewed: u32,
+    pub streak: u32,
+    pub best_streak: u32,
+}
+
+impl LearnTrainer {
+    pub fn new(tuning: Tuning, config: LearnConfig, seed: u64) -> Self {
+        Self {
+            config,
+            tuning,
+            current: None,
+            cards: HashMap::new(),
+            feedback: None,
+            last_review: None,
+            advance_at: None,
+            last_judged: None,
+            repick: None,
+            poly_since: [None; 12],
+            class_seen_at: [f64::NEG_INFINITY; 12],
+            ringing_mask: 0,
+            last_voiced: f64::NEG_INFINITY,
+            rng: seed | 1,
+            reviewed: 0,
+            streak: 0,
+            best_streak: 0,
+        }
+    }
+
+    pub fn current(&self) -> Option<&ActiveCard> {
+        self.current.as_ref()
+    }
+
+    pub fn current_chord(&self) -> Option<&'static ChordVoicing> {
+        match self.current {
+            Some(ActiveCard::Chord { index, .. }) => self.config.chord_set.chords().get(index),
+            _ => None,
+        }
+    }
+
+    pub fn feedback(&self) -> Option<(&LearnFeedback, f64)> {
+        self.feedback.as_ref().map(|(f, t)| (f, *t))
+    }
+
+    pub fn is_resolved(&self) -> bool {
+        self.advance_at.is_some()
+    }
+
+    pub fn card_state(&self, key: &str) -> SrsCard {
+        self.cards.get(key).copied().unwrap_or_default()
+    }
+
+    /// Whether the current card's fretboard guide should be shown right now.
+    pub fn show_guide(&self) -> bool {
+        if self.is_resolved() {
+            return true;
+        }
+        match self.config.guide {
+            GuideMode::Show => true,
+            GuideMode::Hide => false,
+            GuideMode::Auto => {
+                let Some(key) = self.current_key() else { return true };
+                !self.card_state(&key).is_memorized()
+            }
+        }
+    }
+
+    pub fn current_key(&self) -> Option<String> {
+        match &self.current {
+            Some(ActiveCard::Scale { scale, .. }) => Some(LearnCard::Scale(*scale).key(self.config.chord_set)),
+            Some(ActiveCard::Chord { index, .. }) => Some(LearnCard::Chord(*index).key(self.config.chord_set)),
+            None => None,
+        }
+    }
+
+    pub fn progress(&self) -> LearnProgress {
+        LearnProgress {
+            cards: self.cards.clone(),
+            reviewed: self.reviewed,
+            streak: self.streak,
+            best_streak: self.best_streak,
+        }
+    }
+
+    pub fn set_progress(&mut self, p: LearnProgress) {
+        self.cards = p.cards;
+        self.reviewed = p.reviewed;
+        self.streak = p.streak;
+        self.best_streak = p.best_streak.max(p.streak);
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.cards.clear();
+        self.reviewed = 0;
+        self.streak = 0;
+        self.best_streak = 0;
+    }
+
+    /// All cards in the active deck.
+    pub fn deck_cards(&self) -> Vec<LearnCard> {
+        let mut out = Vec::new();
+        if matches!(self.config.deck, LearnDeck::Both | LearnDeck::Scales) {
+            for kind in ScaleKind::all() {
+                if kind.is_chromatic() {
+                    continue;
+                }
+                let scale = Scale { root: self.config.root % 12, kind };
+                if !self.scale_sequence(scale).1.is_empty() {
+                    out.push(LearnCard::Scale(scale));
+                }
+            }
+        }
+        if matches!(self.config.deck, LearnDeck::Both | LearnDeck::Chords) {
+            for idx in 0..self.config.chord_set.chords().len() {
+                out.push(LearnCard::Chord(idx));
+            }
+        }
+        out
+    }
+
+    /// Counts of `(due, new, memorized)` cards in the active deck at `now`.
+    pub fn deck_counts(&self, now: f64) -> (usize, usize, usize) {
+        let unix_now = unix_seconds(now);
+        let (mut due, mut new_cards, mut memorized) = (0, 0, 0);
+        for card in self.deck_cards() {
+            let srs = self.card_state(&card.key(self.config.chord_set));
+            if srs.due == 0.0 {
+                new_cards += 1;
+            } else if srs.is_due(unix_now) {
+                due += 1;
+            }
+            if srs.is_memorized() {
+                memorized += 1;
+            }
+        }
+        (due, new_cards, memorized)
+    }
+
+    /// Override the most recent completed card's Anki grade (`1` Again .. `4` Easy).
+    pub fn regrade(&mut self, grade: Grade, now: f64) -> bool {
+        let Some((key, before, unix_t)) = self.last_review.clone() else {
+            return false;
+        };
+        let reviewed = before.review(grade, unix_t);
+        self.cards.insert(key, reviewed);
+        if let Some((LearnFeedback::Completed { grade: g, interval, .. }, _)) = &mut self.feedback {
+            *g = grade;
+            *interval = reviewed.interval;
+        }
+        if self.advance_at.is_some() {
+            self.advance_at = Some(now + 0.6);
+        }
+        true
+    }
+
+    pub fn restart(&mut self, now: f64) {
+        self.current = None;
+        self.advance_at = None;
+        self.next(now);
+    }
+
+    pub fn next(&mut self, now: f64) {
+        let prev_key = self.current_key();
+        if self.advance_at.take().is_some() {
+            if let Some(ActiveCard::Chord { index, .. }) = self.current {
+                if let Some(v) = self.config.chord_set.chords().get(index) {
+                    self.ringing_mask = v.pitch_class_mask(self.tuning);
+                }
+            }
+        }
+        self.poly_since = [None; 12];
+        self.class_seen_at = [f64::NEG_INFINITY; 12];
+
+        let mut pool = self.deck_cards();
+        if pool.len() > 1 {
+            pool.retain(|c| Some(c.key(self.config.chord_set)) != prev_key);
+        }
+        if pool.is_empty() {
+            self.current = None;
+            return;
+        }
+
+        let unix_now = unix_seconds(now);
+        let weights: Vec<f64> = pool
+            .iter()
+            .map(|c| self.card_state(&c.key(self.config.chord_set)).weight(unix_now))
+            .collect();
+        let total: f64 = weights.iter().sum();
+        let mut pick = self.next_f64() * total;
+        let mut chosen = *pool.last().unwrap();
+        for (&card, &w) in pool.iter().zip(&weights) {
+            if pick < w {
+                chosen = card;
+                break;
+            }
+            pick -= w;
+        }
+
+        self.current = Some(match chosen {
+            LearnCard::Scale(scale) => {
+                let (box_positions, sequence) = self.scale_sequence(scale);
+                ActiveCard::Scale {
+                    scale,
+                    box_positions,
+                    sequence,
+                    step: 0,
+                    started: now,
+                    misses: 0,
+                }
+            }
+            LearnCard::Chord(index) => ActiveCard::Chord {
+                index,
+                started: now,
+                heard_classes: 0,
+                heard_strings: 0,
+            },
+        });
+    }
+
+    pub fn skip(&mut self, now: f64) {
+        let unix_now = unix_seconds(now);
+        if let Some(key) = self.current_key() {
+            let before = self.card_state(&key);
+            let reviewed = before.review(Grade::Again, unix_now);
+            self.cards.insert(key.clone(), reviewed);
+            self.last_review = Some((key, before, unix_now));
+            self.streak = 0;
+            let title = self.current_title().unwrap_or_default();
+            self.feedback = Some((LearnFeedback::Skipped { title }, now));
+        }
+        self.next(now);
+    }
+
+    pub fn current_title(&self) -> Option<String> {
+        match &self.current {
+            Some(ActiveCard::Scale { scale, .. }) => Some(scale.name()),
+            Some(ActiveCard::Chord { index, .. }) => {
+                self.config.chord_set.chords().get(*index).map(|v| format!("{} chord", v.name))
+            }
+            None => None,
+        }
+    }
+
+    pub fn update(&mut self, now: f64, reading: &PitchReading, mono: Option<Note>, a4: f32) {
+        if mono.is_none() {
+            self.last_judged = None;
+        }
+        if let Some(at) = self.advance_at {
+            if now >= at {
+                self.next(now);
+            }
+            return;
+        }
+        if self.current.is_none() {
+            self.next(now);
+        }
+        match &self.current {
+            Some(ActiveCard::Scale { .. }) => self.update_scale(now, mono),
+            Some(ActiveCard::Chord { .. }) => self.update_chord(now, reading, mono, a4),
+            None => {}
+        }
+    }
+
+    fn update_scale(&mut self, now: f64, heard: Option<Note>) {
+        let Some(note) = heard else { return };
+        if self.last_judged == Some(note) {
+            return;
+        }
+        self.last_judged = Some(note);
+
+        let Some(ActiveCard::Scale {
+            scale,
+            sequence,
+            step,
+            started,
+            misses,
+            ..
+        }) = &mut self.current
+        else {
+            return;
+        };
+        let Some(&target_pos) = sequence.get(*step) else { return };
+        let expected = self.tuning.note_at(target_pos);
+
+        if self.repick == Some(note) && note != expected {
+            return;
+        }
+        if note == expected {
+            self.repick = Some(note);
+            *step += 1;
+            if *step >= sequence.len() {
+                let seconds = (now - *started).max(0.1);
+                let per_note = seconds / sequence.len().max(1) as f64;
+                let grade = Grade::for_note(per_note, *misses);
+                let title = scale.name();
+                let key = LearnCard::Scale(*scale).key(self.config.chord_set);
+                self.finish_card(key, title, seconds, grade, now);
+            }
+        } else {
+            *misses += 1;
+            self.streak = 0;
+            self.feedback = Some((LearnFeedback::WrongNote { played: note, expected }, now));
+        }
+    }
+
+    fn update_chord(&mut self, now: f64, reading: &PitchReading, mono: Option<Note>, a4: f32) {
+        let Some(ActiveCard::Chord { index, started, .. }) = self.current else {
+            return;
+        };
+        let Some(voicing) = self.config.chord_set.chords().get(index) else {
+            return;
+        };
+        let target_mask = voicing.pitch_class_mask(self.tuning);
+
+        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
+            reading
+                .poly
+                .iter()
+                .copied()
+                .filter(|&f| f > 0.0)
+                .filter_map(|f| nearest_note(f, a4))
+                .filter(|r| r.cents.abs() <= 35.0)
+                .fold(0u16, |m, r| m | (1 << r.note.pitch_class()))
+        } else {
+            0
+        };
+
+        let mut frame_mask = 0u16;
+        for pc in 0..12usize {
+            if (raw_poly_mask & (1 << pc)) != 0 {
+                let since = *self.poly_since[pc].get_or_insert(now);
+                if now - since >= POLY_HOLD {
+                    frame_mask |= 1 << pc;
+                }
+            } else {
+                self.poly_since[pc] = None;
+            }
+        }
+        if let Some(n) = mono {
+            frame_mask |= 1 << n.pitch_class();
+        }
+
+        if raw_poly_mask == 0 && mono.is_none() {
+            if now - self.last_voiced > 0.2 {
+                self.ringing_mask = 0;
+                self.class_seen_at = [f64::NEG_INFINITY; 12];
+            }
+        } else {
+            self.last_voiced = now;
+        }
+
+        if self.ringing_mask != 0
+            && frame_mask != 0
+            && (frame_mask & !self.ringing_mask) == 0
+            && self.ringing_mask != target_mask
+        {
+            return;
+        }
+        if frame_mask & !self.ringing_mask != 0 {
+            self.ringing_mask = 0;
+        }
+
+        for pc in 0..12usize {
+            if (frame_mask & (1 << pc)) != 0 {
+                self.class_seen_at[pc] = now;
+            }
+        }
+
+        let mut active_classes = 0u16;
+        for (pc, &t) in self.class_seen_at.iter().enumerate() {
+            if now - t <= STRUM_WINDOW {
+                active_classes |= 1 << pc;
+            }
+        }
+
+        let mut heard_strings = 0u8;
+        for (string, fret) in voicing.frets.iter().enumerate() {
+            if let Some(fret) = *fret {
+                let pc = self.tuning.note_at(Position { string, fret }).pitch_class();
+                if active_classes & (1 << pc) != 0 {
+                    heard_strings |= 1 << string;
+                }
+            }
+        }
+
+        if let Some(ActiveCard::Chord {
+            heard_classes: hc,
+            heard_strings: hs,
+            ..
+        }) = &mut self.current
+        {
+            *hc = active_classes & target_mask;
+            *hs = heard_strings;
+        }
+
+        let extra_in_frame = (frame_mask & !target_mask).count_ones();
+        if (active_classes & target_mask) == target_mask && extra_in_frame == 0 {
+            let seconds = (now - started).max(0.1);
+            let grade = Grade::for_chord(seconds);
+            let key = LearnCard::Chord(index).key(self.config.chord_set);
+            let title = format!("{} chord", voicing.name);
+            self.finish_card(key, title, seconds, grade, now);
+        }
+    }
+
+    fn finish_card(&mut self, key: String, title: String, seconds: f64, grade: Grade, now: f64) {
+        let unix_now = unix_seconds(now);
+        let before = self.card_state(&key);
+        let reviewed = before.review(grade, unix_now);
+        self.cards.insert(key.clone(), reviewed);
+        self.last_review = Some((key, before, unix_now));
+        self.reviewed += 1;
+        if grade != Grade::Again {
+            self.streak += 1;
+            self.best_streak = self.best_streak.max(self.streak);
+        } else {
+            self.streak = 0;
+        }
+        self.feedback = Some((
+            LearnFeedback::Completed {
+                title,
+                seconds,
+                grade,
+                interval: reviewed.interval,
+            },
+            now,
+        ));
+        self.advance_at = Some(now + 1.1);
+    }
+
+    /// `(box_positions, octave_trimmed_sequence)` for a scale in the configured fret range.
+    fn scale_sequence(&self, scale: Scale) -> (Vec<Position>, Vec<Position>) {
+        let c = &self.config;
+        let mut box_positions = Vec::new();
+        for string in 0..6 {
+            for fret in c.min_fret..=c.max_fret.max(c.min_fret) {
+                let pos = Position { string, fret };
+                if scale.contains(self.tuning.note_at(pos)) {
+                    box_positions.push(pos);
+                }
+            }
+        }
+        let mut candidates = box_positions.clone();
+        let root = scale.root % 12;
+        let roots = || {
+            candidates
+                .iter()
+                .map(|&p| self.tuning.note_at(p))
+                .filter(|n| n.pitch_class() == root)
+        };
+        if let (Some(lo), Some(hi)) = (roots().min(), roots().max()) {
+            if lo < hi {
+                candidates.retain(|&p| (lo..=hi).contains(&self.tuning.note_at(p)));
+            }
+        }
+        let tuning = self.tuning;
+        candidates.sort_by_key(|&p| (tuning.note_at(p), p.fret));
+        candidates.dedup_by_key(|p| tuning.note_at(*p));
+        (box_positions, candidates)
+    }
+
+    fn next_f64(&mut self) -> f64 {
+        self.rng ^= self.rng >> 12;
+        self.rng ^= self.rng << 25;
+        self.rng ^= self.rng >> 27;
+        let x = self.rng.wrapping_mul(0x2545_f491_4f6c_dd1d);
+        (x >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walks_a_scale_card_and_schedules_it_with_sm2() {
+        let cfg = LearnConfig {
+            deck: LearnDeck::Scales,
+            root: 9,
+            min_fret: 5,
+            max_fret: 8,
+            ..Default::default()
+        };
+        let mut t = LearnTrainer::new(Tuning::STANDARD, cfg, 42);
+        t.restart(0.0);
+
+        let ActiveCard::Scale { sequence, .. } = t.current().unwrap().clone() else {
+            panic!("expected scale card");
+        };
+        assert!(!sequence.is_empty());
+        let key = t.current_key().unwrap();
+
+        let mut now = 0.0;
+        let empty = PitchReading::default();
+        for &pos in &sequence {
+            now += 0.4;
+            let note = t.tuning.note_at(pos);
+            t.update(now, &empty, Some(note), 440.0);
+            t.update(now + 0.05, &empty, None, 440.0);
+        }
+        assert!(t.is_resolved());
+        assert_eq!(t.reviewed, 1);
+        assert_eq!(t.card_state(&key).interval, 600.0); // fast run -> Easy -> 10m
+
+        // Override grade with Hard (key 2).
+        assert!(t.regrade(Grade::Hard, now));
+        assert_eq!(t.card_state(&key).interval, 60.0);
+    }
+}

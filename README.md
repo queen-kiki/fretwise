@@ -7,6 +7,11 @@ Guitar learning app for electric guitar through an audio interface.
 - **Chord trainer**: data-driven chord curricula (beginner open chords through
   barre chords), recognizing both full strums (via FFT polyphonic detection)
   and slow strums / arpeggios.
+- **Learn (Anki spaced repetition)**: SM-2 flashcards across whole scale
+  patterns and chords (`Both`, `Scales`, or `Chords`), auto-graded hands-free
+  from speed and accuracy (with `1`–`4` keys to override as `Again` / `Hard` /
+  `Good` / `Easy`) and hiding the fretboard diagram once a card matures so you
+  recall shapes from memory.
 - **Tuner**: note, cents gauge, and which string to turn which way.
 - **Progress**: per-position heatmap of first-try accuracy and average time.
 

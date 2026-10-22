@@ -11,8 +11,9 @@ use egui::text::LayoutJob;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
-    fingering, ChordFeedback, ChordOrder, ChordProgress, ChordSetKind, ChordTrainer, ChordTrainerConfig, Feedback,
-    Labels, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer,
+    fingering, format_interval, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordSetKind, ChordTrainer,
+    ChordTrainerConfig, Feedback, Grade, GuideMode, Labels, LearnConfig, LearnDeck, LearnFeedback, LearnProgress,
+    LearnTrainer, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer,
     TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ enum Tab {
     Tuner,
     Trainer,
     Chords,
+    Learn,
     Progress,
 }
 
@@ -75,6 +77,7 @@ pub struct FretwiseUi {
     stabilizer: NoteStabilizer,
     trainer: Trainer,
     chord_trainer: ChordTrainer,
+    learn_trainer: LearnTrainer,
     smoothed_cents: f32,
     chime_enabled: bool,
     chime_pending: bool,
@@ -98,6 +101,7 @@ impl Default for FretwiseUi {
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
             chord_trainer: ChordTrainer::new(Tuning::STANDARD, ChordTrainerConfig::default(), seed ^ 0x9e37_79b9),
+            learn_trainer: LearnTrainer::new(Tuning::STANDARD, LearnConfig::default(), seed ^ 0x517c_c1b7),
             smoothed_cents: 0.0,
             chime_enabled: true,
             chime_pending: false,
@@ -120,6 +124,8 @@ pub struct UiState {
     progress: Progress,
     chords: ChordTrainerConfig,
     chord_progress: ChordProgress,
+    learn: LearnConfig,
+    learn_progress: LearnProgress,
     /// Play a sound on correct answers.
     chime: bool,
     /// Draw the scale's positions on the trainer's fretboard.
@@ -160,6 +166,12 @@ impl FretwiseUi {
         ui.chord_trainer.tuning = ui.tuning;
         ui.chord_trainer.config = state.chords;
         ui.chord_trainer.set_progress(state.chord_progress);
+        let mut learn_cfg = state.learn;
+        learn_cfg.max_fret = learn_cfg.max_fret.min(15);
+        learn_cfg.min_fret = learn_cfg.min_fret.min(learn_cfg.max_fret);
+        ui.learn_trainer.tuning = ui.tuning;
+        ui.learn_trainer.config = learn_cfg;
+        ui.learn_trainer.set_progress(state.learn_progress);
         ui
     }
 
@@ -172,6 +184,8 @@ impl FretwiseUi {
             progress: self.trainer.progress(),
             chords: self.chord_trainer.config,
             chord_progress: self.chord_trainer.progress(),
+            learn: self.learn_trainer.config,
+            learn_progress: self.learn_trainer.progress(),
             chime: self.chime_enabled,
             show_pattern: self.show_pattern,
             show_fingering: self.show_fingering,
@@ -203,6 +217,23 @@ impl FretwiseUi {
             if after.map(|(_, t)| t) != before && matches!(after, Some((ChordFeedback::Correct { .. }, _))) {
                 self.chime_pending |= self.chime_enabled;
             }
+        } else if self.tab == Tab::Learn {
+            for (key, grade) in [
+                (egui::Key::Num1, Grade::Again),
+                (egui::Key::Num2, Grade::Hard),
+                (egui::Key::Num3, Grade::Good),
+                (egui::Key::Num4, Grade::Easy),
+            ] {
+                if ui.input(|i| i.key_pressed(key)) {
+                    self.learn_trainer.regrade(grade, now);
+                }
+            }
+            let before = self.learn_trainer.feedback().map(|(_, t)| t);
+            self.learn_trainer.update(now, &reading, held.map(|h| h.note), self.a4);
+            let after = self.learn_trainer.feedback();
+            if after.map(|(_, t)| t) != before && matches!(after, Some((LearnFeedback::Completed { .. }, _))) {
+                self.chime_pending |= self.chime_enabled;
+            }
         }
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
@@ -231,6 +262,7 @@ impl FretwiseUi {
             Tab::Tuner => self.tuner_tab(ui, &reading),
             Tab::Trainer => self.trainer_tab(ui, now),
             Tab::Chords => self.chords_tab(ui, now),
+            Tab::Learn => self.learn_tab(ui, now),
             Tab::Progress => self.progress_tab(ui),
         });
 
@@ -304,6 +336,7 @@ impl FretwiseUi {
                 &[
                     (Tab::Trainer, "Notes"),
                     (Tab::Chords, "Chords"),
+                    (Tab::Learn, "Learn"),
                     (Tab::Tuner, "Tuner"),
                     (Tab::Progress, "Progress"),
                 ],
@@ -339,6 +372,14 @@ impl FretwiseUi {
                     readout(ui, "right", t.correct, GOOD);
                     readout(ui, "best", t.best_streak, ui.visuals().text_color());
                     readout(ui, "streak", t.streak, ui.visuals().strong_text_color());
+                } else if self.tab == Tab::Learn {
+                    ui.add_space(24.0);
+                    let now = ui.input(|i| i.time);
+                    let (due, new_cards, memorized) = self.learn_trainer.deck_counts(now);
+                    readout(ui, "mem", memorized as u32, GOOD);
+                    readout(ui, "new", new_cards as u32, TRANS_BLUE);
+                    readout(ui, "due", due as u32, HEARD);
+                    readout(ui, "streak", self.learn_trainer.streak, ui.visuals().strong_text_color());
                 }
             });
         });
@@ -373,6 +414,8 @@ impl FretwiseUi {
                 self.trainer.restart(now);
                 self.chord_trainer.tuning = self.tuning;
                 self.chord_trainer.restart(now);
+                self.learn_trainer.tuning = self.tuning;
+                self.learn_trainer.restart(now);
             }
 
             section(ui, "Trainer");
@@ -948,6 +991,373 @@ impl FretwiseUi {
         });
     }
 
+    fn learn_tab(&mut self, ui: &mut egui::Ui, now: f64) {
+        let before = self.learn_trainer.config;
+        egui::TopBottomPanel::bottom("learn_rack")
+            .frame(
+                egui::Frame::new()
+                    .fill(rack_fill(ui))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .corner_radius(8),
+            )
+            .show_separator_line(false)
+            .show_inside(ui, |ui| self.learn_rack(ui, now));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show_inside(ui, |ui| self.learn_stage(ui, now));
+        let display_only = LearnConfig { guide: before.guide, ..self.learn_trainer.config };
+        if display_only != before {
+            self.learn_trainer.restart(now);
+        }
+    }
+
+    fn learn_stage(&mut self, ui: &mut egui::Ui, now: f64) {
+        let resolved = self.learn_trainer.is_resolved();
+        let show_guide = self.learn_trainer.show_guide();
+        let held = self.stabilizer.current();
+        let visuals = ui.visuals().clone();
+
+        let mut markers = Vec::new();
+        let mut active_strings = [true; 6];
+        let is_scale = matches!(self.learn_trainer.current(), Some(ActiveCard::Scale { .. }));
+
+        match self.learn_trainer.current().cloned() {
+            Some(ActiveCard::Scale {
+                scale,
+                sequence,
+                step,
+                ..
+            }) => {
+                let interval = |pos: Position| (self.tuning.note_at(pos).pitch_class() + 12 - scale.root % 12) % 12;
+                let (root_fill, other_fill) = if visuals.dark_mode {
+                    (TRANS_PINK, Color32::from_rgb(118, 86, 110))
+                } else {
+                    (Color32::from_rgb(214, 92, 140), Color32::from_rgb(222, 184, 202))
+                };
+                for (idx, &pos) in sequence.iter().enumerate() {
+                    if idx < step || resolved {
+                        markers.push(Marker {
+                            pos,
+                            color: GOOD,
+                            size: 0.48,
+                            ring: false,
+                            label: None,
+                            text: Color32::BLACK,
+                        });
+                    } else if show_guide {
+                        let (color, size) = match interval(pos) {
+                            0 => (root_fill, 0.55),
+                            7 => (other_fill, 0.42),
+                            _ => (other_fill, 0.32),
+                        };
+                        markers.push(Marker {
+                            pos,
+                            color,
+                            size,
+                            ring: false,
+                            label: None,
+                            text: Color32::BLACK,
+                        });
+                    }
+                }
+                if let Some(h) = held {
+                    for pos in self.tuning.positions_of(h.note, 15) {
+                        markers.push(Marker {
+                            pos,
+                            color: HEARD,
+                            size: 0.42,
+                            ring: false,
+                            label: None,
+                            text: Color32::BLACK,
+                        });
+                    }
+                }
+                if show_guide {
+                    if let Some(&target_pos) = sequence.get(step) {
+                        let under = markers
+                            .iter()
+                            .filter(|m| m.pos == target_pos)
+                            .map(|m| m.size)
+                            .fold(0.32, f32::max);
+                        markers.push(Marker {
+                            pos: target_pos,
+                            color: TARGET,
+                            size: under + 0.28,
+                            ring: true,
+                            label: None,
+                            text: Color32::BLACK,
+                        });
+                    }
+                }
+            }
+            Some(ActiveCard::Chord { heard_strings, .. }) => {
+                if let Some(v) = self.learn_trainer.current_chord() {
+                    for (string, slot) in active_strings.iter_mut().enumerate() {
+                        *slot = v.frets[string].is_some();
+                        if let Some(fret) = v.frets[string] {
+                            let pos = Position { string, fret };
+                            let heard = (heard_strings & (1 << string)) != 0;
+                            if show_guide {
+                                let color = if resolved || heard { GOOD } else { TARGET };
+                                let finger = v.fingers[string];
+                                let label = if finger > 0 && self.show_fingering {
+                                    Some(finger.to_string())
+                                } else if fret == 0 {
+                                    Some("O".into())
+                                } else {
+                                    None
+                                };
+                                markers.push(Marker {
+                                    pos,
+                                    color,
+                                    size: 0.78,
+                                    ring: fret == 0 && !heard && !resolved,
+                                    label,
+                                    text: if fret == 0 && !heard && !resolved { color } else { Color32::BLACK },
+                                });
+                            } else if heard {
+                                markers.push(Marker {
+                                    pos,
+                                    color: GOOD,
+                                    size: 0.65,
+                                    ring: false,
+                                    label: None,
+                                    text: Color32::BLACK,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            None => {}
+        }
+
+        let terminal_id = ui.id().with("learn_terminal_height");
+        let terminal_h = ui.data(|d| d.get_temp::<f32>(terminal_id)).unwrap_or(100.0);
+        let gap = 8.0;
+        let height = (ui.available_height() - terminal_h - gap - 12.0).clamp(220.0, 360.0);
+        let spare = ui.available_height() - height - gap - terminal_h;
+        ui.add_space((spare / 2.0).max(0.0));
+        if is_scale {
+            let cfg = &mut self.learn_trainer.config;
+            let controls = NeckControls {
+                min_fret: &mut cfg.min_fret,
+                max_fret: &mut cfg.max_fret,
+                strings: &mut active_strings,
+            };
+            fretboard(ui, 15, height, &markers, Some(controls));
+        } else {
+            let mut min_fret = 0u8;
+            let mut max_fret = 15u8;
+            let controls = NeckControls {
+                min_fret: &mut min_fret,
+                max_fret: &mut max_fret,
+                strings: &mut active_strings,
+            };
+            fretboard(ui, 15, height, &markers, Some(controls));
+        }
+        ui.add_space(gap);
+        let h = self.learn_terminal(ui, now);
+        ui.data_mut(|d| d.insert_temp(terminal_id, h));
+    }
+
+    fn learn_terminal(&self, ui: &mut egui::Ui, now: f64) -> f32 {
+        let syn = &theme::SYNTAX;
+        let big = theme::pixel_font(ui, 24.0);
+        let small = theme::pixel_font(ui, 16.0);
+
+        let memorized = self
+            .learn_trainer
+            .current_key()
+            .is_some_and(|k| self.learn_trainer.card_state(&k).is_memorized());
+
+        let mut cmd = LayoutJob::default();
+        let c = &mut cmd;
+        token(c, "> ", &big, syn.comment);
+        match self.learn_trainer.current() {
+            Some(ActiveCard::Scale {
+                scale,
+                box_positions,
+                sequence,
+                step,
+                ..
+            }) => {
+                token(c, "walk ", &big, syn.keyword);
+                token(c, &scale.name(), &big, syn.note);
+                token(
+                    c,
+                    &format!(" ({}/{})", (*step).min(sequence.len()), sequence.len()),
+                    &big,
+                    syn.number,
+                );
+                if self.show_fingering {
+                    if let (Some(&target_pos), Some(fingers)) =
+                        (sequence.get(*step), fingering(box_positions, self.learn_trainer.config.min_fret))
+                    {
+                        if let Some(f) = box_positions.iter().position(|&p| p == target_pos).map(|i| fingers[i]) {
+                            match f {
+                                0 => token(c, " open", &big, TARGET),
+                                f => {
+                                    token(c, " finger ", &big, syn.text);
+                                    token(c, &f.to_string(), &big, TARGET);
+                                }
+                            }
+                        }
+                    }
+                }
+                if memorized && !self.learn_trainer.show_guide() {
+                    token(c, "  [from memory]", &big, syn.comment);
+                }
+            }
+            Some(ActiveCard::Chord { .. }) => {
+                if let Some(v) = self.learn_trainer.current_chord() {
+                    token(c, "strum ", &big, syn.keyword);
+                    token(c, &v.name, &big, syn.note);
+                    if let Some(barre) = v.barre.filter(|_| self.show_fingering && self.learn_trainer.show_guide()) {
+                        token(c, "  barre fret ", &big, syn.text);
+                        token(c, &barre.to_string(), &big, TARGET);
+                    }
+                    if memorized && !self.learn_trainer.show_guide() {
+                        token(c, "  [from memory]", &big, syn.comment);
+                    }
+                }
+            }
+            None => {
+                token(c, "nothing in deck", &big, syn.text);
+            }
+        }
+
+        let mut out = LayoutJob::default();
+        let o = &mut out;
+        match self.learn_trainer.feedback().filter(|(_, t)| now - t < 2.2) {
+            Some((
+                LearnFeedback::Completed {
+                    title,
+                    seconds,
+                    grade,
+                    interval,
+                },
+                _,
+            )) => {
+                let g_color = match grade {
+                    Grade::Again => BAD,
+                    Grade::Hard => HEARD,
+                    Grade::Good | Grade::Easy => GOOD,
+                };
+                token(o, "ok ", &small, GOOD);
+                token(o, title, &small, syn.note);
+                token(o, &format!(" in {seconds:.1}s · "), &small, syn.text);
+                token(o, grade.label(), &small, g_color);
+                token(o, &format!(" → {} ", format_interval(*interval)), &small, syn.number);
+                token(o, "[1-4 grade]", &small, syn.comment);
+            }
+            Some((LearnFeedback::WrongNote { played, expected }, _)) => {
+                token(o, "err ", &small, BAD);
+                token(o, &format!("that was {played}, need {expected}"), &small, syn.text);
+            }
+            Some((LearnFeedback::Skipped { title }, _)) => {
+                token(o, "again ", &small, BAD);
+                token(o, title, &small, syn.note);
+                token(o, " → 30s", &small, syn.number);
+            }
+            None => match self.learn_trainer.current() {
+                Some(ActiveCard::Chord { heard_classes, .. }) if *heard_classes != 0 => {
+                    token(o, "hearing ", &small, syn.comment);
+                    for pc in 0..12u8 {
+                        if (heard_classes & (1 << pc)) != 0 {
+                            token(o, pitch_class_name(pc), &small, GOOD);
+                            token(o, " ", &small, syn.text);
+                        }
+                    }
+                }
+                Some(ActiveCard::Scale { sequence, step, .. }) => {
+                    if let Some(&pos) = sequence.get(*step) {
+                        let target = self.tuning.note_at(pos);
+                        token(o, "next ", &small, syn.comment);
+                        token(o, &target.to_string(), &small, syn.note);
+                        token(o, &format!(" on string {}", string_number(pos.string)), &small, syn.text);
+                    }
+                }
+                _ => token(o, "anki spaced repetition · play the card...", &small, syn.comment),
+            },
+        }
+
+        egui::Frame::new()
+            .fill(syn.screen)
+            .stroke(egui::Stroke::new(1.0_f32, syn.border))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(18, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let line = ui.label(cmd).rect;
+                if (now * 1.6).fract() < 0.55 {
+                    let cursor = egui::Rect::from_min_size(
+                        egui::pos2(line.right() + 4.0, line.top() + 2.0),
+                        egui::vec2(big.size * 0.55, line.height() - 4.0),
+                    );
+                    ui.painter().rect_filled(cursor, 0.0, syn.keyword);
+                }
+                ui.label(out);
+            })
+            .response
+            .rect
+            .height()
+    }
+
+    fn learn_rack(&mut self, ui: &mut egui::Ui, now: f64) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 18.0;
+            let cfg = &mut self.learn_trainer.config;
+            let mut root = cfg.root as usize % 12;
+            let roots: Vec<&str> = (0..12).map(pitch_class_name).collect();
+            if knob(ui, "learn_root", "Key", &mut root, &roots) {
+                cfg.root = root as u8;
+            }
+            rack_group(ui, "Deck", |ui| {
+                segmented(
+                    ui,
+                    &mut cfg.deck,
+                    &[
+                        (LearnDeck::Both, "Both"),
+                        (LearnDeck::Scales, "Scales"),
+                        (LearnDeck::Chords, "Chords"),
+                    ],
+                    15.0,
+                );
+            });
+            rack_group(ui, "Chords", |ui| {
+                let groups: Vec<(&str, Vec<(ChordSetKind, &str)>)> = ChordSetKind::groups()
+                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                    .collect();
+                let shown = cfg.chord_set.name();
+                dropdown(ui, "learn_chords", &mut cfg.chord_set, shown, &groups, 180.0, 15.0);
+            });
+            rack_group(ui, "Guide", |ui| {
+                segmented(
+                    ui,
+                    &mut cfg.guide,
+                    &[
+                        (GuideMode::Auto, "Auto"),
+                        (GuideMode::Show, "Show"),
+                        (GuideMode::Hide, "Hide"),
+                    ],
+                    15.0,
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let skip = egui::Button::new(RichText::new("Skip").size(16.0))
+                    .min_size(egui::vec2(76.0, 40.0))
+                    .fill(ui.visuals().extreme_bg_color)
+                    .corner_radius(8);
+                if ui.add(skip).on_hover_text("Grade Again (30s) and move on").clicked() {
+                    self.learn_trainer.skip(now);
+                }
+            });
+        });
+    }
+
     fn progress_tab(&mut self, ui: &mut egui::Ui) {
         ui.label("First-try accuracy per position (green = solid, red = needs work). Number = average seconds.");
         ui.add_space(8.0);
@@ -978,6 +1388,7 @@ impl FretwiseUi {
         ui.add_space(8.0);
         if ui.button("Reset progress").clicked() {
             self.trainer.reset_stats();
+            self.learn_trainer.reset_stats();
         }
     }
 }
