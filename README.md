@@ -36,7 +36,7 @@ Fretwise only listens to your dry guitar signal and plays a short chime when you
 - **Learn** — Spaced-repetition flashcards (like Anki, but hands-free) for scale shapes and chords. Pick a deck, play what's asked, and cards are scheduled automatically based on your speed and accuracy. Once a card matures, the fretboard diagram hides so you have to recall it from memory.
   - Press `1`–`4` during the pause after a card to override its grade (`Again` / `Hard` / `Good` / `Easy`).
   - Click **Cards** to browse the deck or inspect individual shapes.
-- **Free practice** (the eighth-note tab):
+- **Free practice**:
   - **Notes** — Drills individual notes or full scale runs in any key and scale, weighting the prompt toward positions you miss or play slowly. Drag the highlighted strip of fret numbers under the neck to lock drills to a specific fret range, or click string numbers on the left (1 = high E, 6 = low E) to mute strings out of the drill.
   - **Chords** — Drills chords by family, single chord, or Learn deck, recognizing both full strums and picked arpeggios. With **Diagram** set to *Auto*, shapes are shown while you learn them and hidden once you play them cleanly a few times in a row.
 - **Tuner** — Chromatic tuner with cents gauge and string indicators.
