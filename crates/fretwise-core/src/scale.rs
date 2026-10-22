@@ -345,6 +345,16 @@ impl Scale {
             format!("{} {}", pitch_class_name(self.root), self.kind.name())
         }
     }
+
+    /// Space-separated pitch-class names of the scale starting from its root.
+    pub fn notes_string(self) -> String {
+        let mask = self.kind.entry().mask;
+        (0..12u8)
+            .filter(|&semi| (mask & (1 << semi)) != 0)
+            .map(|semi| pitch_class_name((self.root + semi) % 12))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 #[cfg(test)]

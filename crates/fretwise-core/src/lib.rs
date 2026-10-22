@@ -32,7 +32,7 @@ pub use fingering::fingering;
 pub use learn::{ActiveCard, GuideMode, LearnCard, LearnConfig, LearnFeedback, LearnProgress, LearnTrainer};
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};
-pub use srs::{format_interval, Grade, SrsCard};
+pub use srs::{format_interval, unix_seconds, Grade, SrsCard};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};
 pub use trainer::{

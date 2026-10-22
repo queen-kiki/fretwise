@@ -91,6 +91,18 @@ impl ChordVoicing {
     pub fn notes(&self, tuning: Tuning) -> Vec<Note> {
         self.positions().into_iter().map(|p| tuning.note_at(p)).collect()
     }
+
+    /// Compact string-by-string fret diagram, e.g. `"x 3 2 0 1 0"`.
+    pub fn shape_string(&self) -> String {
+        self.frets
+            .iter()
+            .map(|f| match f {
+                Some(fret) => fret.to_string(),
+                None => "x".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 struct Registry {
@@ -365,6 +377,20 @@ impl ChordTrainer {
         self.advance_at = None;
         self.seq_step = 0;
         self.next(now);
+    }
+
+    /// Immediately put `chord` on stage.
+    pub fn select_chord(&mut self, chord: ChordKind, now: f64) {
+        self.advance_at = None;
+        self.feedback = None;
+        self.poly_since = [None; 12];
+        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.current = Some(ChordChallenge {
+            chord,
+            started: now,
+            heard_classes: 0,
+            heard_strings: 0,
+        });
     }
 
     pub fn next(&mut self, now: f64) {

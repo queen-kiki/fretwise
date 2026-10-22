@@ -11,9 +11,10 @@ use egui::text::LayoutJob;
 use egui::{Color32, RichText};
 use fretwise_core::theory::{nearest_note, pitch_class_name, string_number};
 use fretwise_core::{
-    fingering, format_interval, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordTrainer, ChordTrainerConfig,
-    DeckKind, Feedback, Grade, GuideMode, Labels, LearnConfig, LearnFeedback, LearnProgress, LearnTrainer, Note,
-    NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, ScaleKind, Trainer, TrainerConfig, Tuning,
+    fingering, format_interval, unix_seconds, ActiveCard, ChordFeedback, ChordOrder, ChordProgress, ChordTrainer,
+    ChordTrainerConfig, DeckKind, Feedback, Grade, GuideMode, Labels, LearnCard, LearnConfig, LearnFeedback,
+    LearnProgress, LearnTrainer, Note, NoteStabilizer, Order, PitchReading, Position, Progress, PromptStyle, Scale,
+    ScaleKind, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +71,8 @@ pub struct FretwiseUi {
     tab: Tab,
     settings_open: bool,
     about_open: bool,
+    browser_open: bool,
+    browser_filter: String,
     theme: Theme,
     a4: f32,
     tuning: Tuning,
@@ -94,6 +97,8 @@ impl Default for FretwiseUi {
             tab: Tab::Trainer,
             settings_open: false,
             about_open: false,
+            browser_open: false,
+            browser_filter: String::new(),
             theme: Theme::System,
             a4: 440.0,
             tuning: Tuning::STANDARD,
@@ -296,6 +301,9 @@ impl FretwiseUi {
         }
         if self.about_open {
             self.about_window(ui.ctx());
+        }
+        if self.browser_open {
+            self.deck_browser_window(ui.ctx(), now);
         }
     }
 
@@ -954,19 +962,34 @@ impl FretwiseUi {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
             let cfg = &mut self.chord_trainer.config;
+            let count = cfg.deck.chords().len();
+            let mut open_browser = false;
             rack_group(ui, "Deck", |ui| {
-                let raw = DeckKind::chord_groups();
-                let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = raw
-                    .iter()
-                    .map(|(group, kinds)| (*group, kinds.iter().map(|&k| (k, k.name())).collect()))
-                    .collect();
-                let shown = cfg.deck.name();
-                dropdown(ui, "chord_deck", &mut cfg.deck, shown, &groups, 230.0, 15.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let raw = DeckKind::chord_groups();
+                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = raw
+                        .iter()
+                        .map(|(group, kinds)| (*group, kinds.iter().map(|&k| (k, k.name())).collect()))
+                        .collect();
+                    let shown = cfg.deck.name();
+                    dropdown(ui, "chord_deck", &mut cfg.deck, shown, &groups, 210.0, 15.0);
+                    let browse = egui::Button::new(RichText::new(format!("Cards ({count})")).size(14.0))
+                        .min_size(egui::vec2(88.0, 32.0))
+                        .fill(ui.visuals().extreme_bg_color)
+                        .corner_radius(6);
+                    if ui.add(browse).on_hover_text("Browse cards in this deck").clicked() {
+                        open_browser = true;
+                    }
+                });
             });
+            if open_browser {
+                self.browser_open = true;
+            }
             rack_group(ui, "Order", |ui| {
                 segmented(
                     ui,
-                    &mut cfg.order,
+                    &mut self.chord_trainer.config.order,
                     &[(ChordOrder::Random, "Random"), (ChordOrder::InOrder, "In order")],
                     15.0,
                 );
@@ -974,7 +997,7 @@ impl FretwiseUi {
             rack_group(ui, "Diagram", |ui| {
                 segmented(
                     ui,
-                    &mut cfg.show_diagram,
+                    &mut self.chord_trainer.config.show_diagram,
                     &[(true, "Show"), (false, "Hide")],
                     15.0,
                 );
@@ -1309,23 +1332,38 @@ impl FretwiseUi {
     fn learn_rack(&mut self, ui: &mut egui::Ui, now: f64) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
+            let count = self.learn_trainer.deck_cards().len();
             let cfg = &mut self.learn_trainer.config;
             let mut root = cfg.root as usize % 12;
             let roots: Vec<&str> = (0..12).map(pitch_class_name).collect();
             if knob(ui, "learn_root", "Key", &mut root, &roots) {
                 cfg.root = root as u8;
             }
+            let mut open_browser = false;
             rack_group(ui, "Deck", |ui| {
-                let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
-                    .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
-                    .collect();
-                let shown = cfg.deck.name();
-                dropdown(ui, "learn_deck", &mut cfg.deck, shown, &groups, 230.0, 15.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
+                        .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                        .collect();
+                    let shown = cfg.deck.name();
+                    dropdown(ui, "learn_deck", &mut cfg.deck, shown, &groups, 210.0, 15.0);
+                    let browse = egui::Button::new(RichText::new(format!("Cards ({count})")).size(14.0))
+                        .min_size(egui::vec2(88.0, 32.0))
+                        .fill(ui.visuals().extreme_bg_color)
+                        .corner_radius(6);
+                    if ui.add(browse).on_hover_text("Browse cards in this deck").clicked() {
+                        open_browser = true;
+                    }
+                });
             });
+            if open_browser {
+                self.browser_open = true;
+            }
             rack_group(ui, "Guide", |ui| {
                 segmented(
                     ui,
-                    &mut cfg.guide,
+                    &mut self.learn_trainer.config.guide,
                     &[
                         (GuideMode::Auto, "Auto"),
                         (GuideMode::Show, "Show"),
@@ -1345,6 +1383,213 @@ impl FretwiseUi {
                 }
             });
         });
+    }
+
+    fn deck_browser_window(&mut self, ctx: &egui::Context, now: f64) {
+        let frame = egui::Frame::window(&ctx.style()).inner_margin(20).corner_radius(12);
+        let mut close_requested = false;
+        let modal = egui::Modal::new(egui::Id::new("fretwise_deck_browser")).frame(frame).show(ctx, |ui| {
+            ui.set_width(580.0);
+            let is_chords_tab = self.tab == Tab::Chords;
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Deck Browser").size(20.0).strong());
+                ui.add_space(8.0);
+                if is_chords_tab {
+                    let before = self.chord_trainer.config.deck;
+                    let raw = DeckKind::chord_groups();
+                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = raw
+                        .iter()
+                        .map(|(group, kinds)| (*group, kinds.iter().map(|&k| (k, k.name())).collect()))
+                        .collect();
+                    let shown = self.chord_trainer.config.deck.name();
+                    dropdown(ui, "browser_chord_deck", &mut self.chord_trainer.config.deck, shown, &groups, 210.0, 14.0);
+                    if self.chord_trainer.config.deck != before {
+                        self.chord_trainer.restart(now);
+                    }
+                } else {
+                    let before = self.learn_trainer.config.deck;
+                    let groups: Vec<(&str, Vec<(DeckKind, &str)>)> = DeckKind::groups()
+                        .map(|(group, kinds)| (group, kinds.map(|k| (k, k.name())).collect()))
+                        .collect();
+                    let shown = self.learn_trainer.config.deck.name();
+                    dropdown(ui, "browser_learn_deck", &mut self.learn_trainer.config.deck, shown, &groups, 210.0, 14.0);
+                    if self.learn_trainer.config.deck != before {
+                        self.learn_trainer.restart(now);
+                    }
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new(RichText::new("✕").size(16.0)).frame(false)).clicked() {
+                        close_requested = true;
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.browser_filter)
+                            .hint_text("Filter cards...")
+                            .desired_width(145.0),
+                    );
+                });
+            });
+
+            let cards: Vec<LearnCard> = if is_chords_tab {
+                self.chord_trainer
+                    .config
+                    .deck
+                    .chords()
+                    .iter()
+                    .copied()
+                    .map(LearnCard::Chord)
+                    .collect()
+            } else {
+                let root = self.learn_trainer.config.root % 12;
+                let deck = self.learn_trainer.config.deck;
+                let mut list = Vec::new();
+                for &kind in deck.scales() {
+                    if !kind.is_chromatic() {
+                        list.push(LearnCard::Scale(Scale { root, kind }));
+                    }
+                }
+                for &chord in deck.chords() {
+                    list.push(LearnCard::Chord(chord));
+                }
+                list
+            };
+
+            let unix_now = unix_seconds(now);
+            let (mut due, mut new_cards, mut memorized) = (0usize, 0usize, 0usize);
+            for &c in &cards {
+                let srs = self.learn_trainer.card_state(&c.key());
+                if srs.due == 0.0 {
+                    new_cards += 1;
+                } else if srs.is_due(unix_now) {
+                    due += 1;
+                }
+                if srs.is_memorized() {
+                    memorized += 1;
+                }
+            }
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{} cards", cards.len())).strong());
+                ui.label(RichText::new("·").weak());
+                ui.label(RichText::new(format!("{memorized} memorized")).color(GOOD));
+                ui.label(RichText::new("·").weak());
+                ui.label(RichText::new(format!("{due} due")).color(HEARD));
+                ui.label(RichText::new("·").weak());
+                ui.label(RichText::new(format!("{new_cards} new")).color(TRANS_BLUE));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new("Click a card to practice it now").size(12.0).weak());
+                });
+            });
+            ui.separator();
+
+            let active_key = if is_chords_tab {
+                self.chord_trainer.current().map(|c| LearnCard::Chord(c.chord).key())
+            } else {
+                self.learn_trainer.current_key()
+            };
+            let query = self.browser_filter.trim().to_ascii_lowercase();
+            let mut picked_card: Option<LearnCard> = None;
+            let mut reset_key: Option<String> = None;
+
+            egui::ScrollArea::vertical()
+                .max_height(380.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("deck_browser_grid")
+                        .num_columns(5)
+                        .striped(true)
+                        .min_col_width(36.0)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            for card in cards {
+                                let title = card.title();
+                                let detail = card.detail();
+                                if !query.is_empty()
+                                    && !title.to_ascii_lowercase().contains(&query)
+                                    && !detail.to_ascii_lowercase().contains(&query)
+                                    && !card.kind_label().to_ascii_lowercase().contains(&query)
+                                {
+                                    continue;
+                                }
+                                let key = card.key();
+                                let is_active = active_key.as_deref() == Some(key.as_str());
+                                let srs = self.learn_trainer.card_state(&key);
+
+                                let badge_color = match card {
+                                    LearnCard::Scale(_) => TRANS_PINK,
+                                    LearnCard::Chord(_) => TRANS_BLUE,
+                                };
+                                ui.label(RichText::new(card.kind_label()).size(12.0).color(badge_color));
+
+                                let prefix = if is_active { "▶ " } else { "" };
+                                let btn = ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(format!("{prefix}{title}"))
+                                                .strong()
+                                                .color(if is_active { TARGET } else { ui.visuals().strong_text_color() }),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text("Practice this card now");
+                                if btn.clicked() {
+                                    picked_card = Some(card);
+                                }
+
+                                ui.label(RichText::new(detail).monospace().size(12.5).weak());
+
+                                let (status_text, status_color) = if srs.due == 0.0 {
+                                    ("New".to_string(), TRANS_BLUE)
+                                } else if srs.is_due(unix_now) {
+                                    (format!("Due · {}", format_interval(srs.interval)), HEARD)
+                                } else if srs.is_memorized() {
+                                    (format!("Memorized · {}", format_interval(srs.interval)), GOOD)
+                                } else {
+                                    (format!("Learning · {}", format_interval(srs.interval)), HEARD)
+                                };
+                                ui.label(RichText::new(status_text).size(12.5).color(status_color))
+                                    .on_hover_text(format!(
+                                        "Reps: {} · Ease: {:.0}%",
+                                        srs.reps,
+                                        srs.ease * 100.0
+                                    ));
+
+                                if srs.due > 0.0 {
+                                    if ui
+                                        .small_button("↺")
+                                        .on_hover_text("Reset spaced-repetition progress for this card")
+                                        .clicked()
+                                    {
+                                        reset_key = Some(key);
+                                    }
+                                } else {
+                                    ui.label("");
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
+
+            if let Some(key) = reset_key {
+                self.learn_trainer.reset_card(&key);
+            }
+            if let Some(card) = picked_card {
+                match (is_chords_tab, card) {
+                    (true, LearnCard::Chord(chord)) => self.chord_trainer.select_chord(chord, now),
+                    _ => {
+                        self.tab = Tab::Learn;
+                        self.learn_trainer.select_card(card, now);
+                    }
+                }
+                close_requested = true;
+            }
+        });
+        if modal.should_close() || close_requested {
+            self.browser_open = false;
+        }
     }
 
     fn progress_tab(&mut self, ui: &mut egui::Ui) {

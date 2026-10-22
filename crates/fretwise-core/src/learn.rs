@@ -68,6 +68,30 @@ impl LearnCard {
             LearnCard::Chord(c) => format!("chord:{}", c.id()),
         }
     }
+
+    /// Display name of the card.
+    pub fn title(self) -> String {
+        match self {
+            LearnCard::Scale(s) => s.name(),
+            LearnCard::Chord(c) => c.name().to_string(),
+        }
+    }
+
+    /// Short category label (`"Scale"` or `"Chord"`).
+    pub fn kind_label(self) -> &'static str {
+        match self {
+            LearnCard::Scale(_) => "Scale",
+            LearnCard::Chord(_) => "Chord",
+        }
+    }
+
+    /// Compact summary string (pitch classes for scales, string frets for chords).
+    pub fn detail(self) -> String {
+        match self {
+            LearnCard::Scale(s) => s.notes_string(),
+            LearnCard::Chord(c) => c.voicing().shape_string(),
+        }
+    }
 }
 
 /// Live state of the card currently on stage.
@@ -236,6 +260,37 @@ impl LearnTrainer {
         self.reviewed = 0;
         self.streak = 0;
         self.best_streak = 0;
+    }
+
+    pub fn reset_card(&mut self, key: &str) {
+        self.cards.remove(key);
+    }
+
+    /// Immediately put `card` on stage for practice.
+    pub fn select_card(&mut self, card: LearnCard, now: f64) {
+        self.advance_at = None;
+        self.feedback = None;
+        self.poly_since = [None; 12];
+        self.class_seen_at = [f64::NEG_INFINITY; 12];
+        self.current = Some(match card {
+            LearnCard::Scale(scale) => {
+                let (box_positions, sequence) = self.scale_sequence(scale);
+                ActiveCard::Scale {
+                    scale,
+                    box_positions,
+                    sequence,
+                    step: 0,
+                    started: now,
+                    misses: 0,
+                }
+            }
+            LearnCard::Chord(chord) => ActiveCard::Chord {
+                chord,
+                started: now,
+                heard_classes: 0,
+                heard_strings: 0,
+            },
+        });
     }
 
     /// All deduplicated cards in the active deck.
