@@ -29,6 +29,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::chord::ChordKind;
+use crate::registry::{self, SortKey};
 use crate::scale::ScaleKind;
 
 const BUILTIN: &[(&str, &str)] = include!(concat!(env!("OUT_DIR"), "/builtin_decks.rs"));
@@ -94,30 +95,14 @@ struct Registry {
 }
 
 impl Registry {
-    fn build(sources: impl IntoIterator<Item = (String, String)>) -> (Self, Vec<String>) {
-        let mut errors = Vec::new();
-        let mut ids = HashSet::new();
-        let mut defs = Vec::new();
-        for (source, json) in sources {
-            match DeckDef::parse(&source, &json) {
-                Ok(def) if !ids.insert(def.id.clone()) => {
-                    errors.push(format!("{source}: id \"{}\" is already taken; skipped", def.id))
-                }
-                Ok(def) => defs.push(def),
-                Err(e) => errors.push(e),
-            }
-        }
-
-        let group_order = |group: &str, defs: &[DeckDef]| {
-            defs.iter().filter(|d| d.group == group).map(|d| d.order).min().unwrap_or(i32::MAX)
-        };
-        let keys: Vec<i32> = defs.iter().map(|d| group_order(&d.group, &defs)).collect();
-        let mut keyed: Vec<_> = keys.into_iter().zip(defs).collect();
-        keyed.sort_by(|(ga, a), (gb, b)| {
-            (ga, &a.group, a.order, &a.name, &a.id).cmp(&(gb, &b.group, b.order, &b.name, &b.id))
+    fn build(sources: impl IntoIterator<Item = registry::Source>) -> (Self, Vec<String>) {
+        let (defs, mut errors) = registry::parse_all(sources, DeckDef::parse, |d| &d.id);
+        let sorted_defs = registry::sort_by_group(defs, |d| SortKey {
+            group: &d.group,
+            order: d.order,
+            name: &d.name,
+            id: &d.id,
         });
-
-        let sorted_defs: Vec<DeckDef> = keyed.into_iter().map(|(_, d)| d).collect();
         let by_id: HashMap<&str, &DeckDef> = sorted_defs.iter().map(|d| (d.id.as_str(), d)).collect();
 
         let mut entries = Vec::new();
@@ -142,10 +127,7 @@ impl Registry {
                 errors.push(format!("deck \"{}\": resolved to 0 valid cards; skipped", def.id));
                 continue;
             }
-            match groups.last_mut() {
-                Some((name, range)) if *name == def.group => range.end += 1,
-                _ => groups.push((def.group.clone(), entries.len()..entries.len() + 1)),
-            }
+            registry::add_to_groups(&mut groups, &def.group, entries.len());
             entries.push(Entry {
                 def: def.clone(),
                 scales,
@@ -156,7 +138,7 @@ impl Registry {
     }
 
     fn builtin() -> (Self, Vec<String>) {
-        Self::build(builtin_sources())
+        Self::build(registry::builtin_sources(BUILTIN))
     }
 }
 
@@ -204,10 +186,6 @@ fn resolve_deck<'a>(
     visiting.remove(def.id.as_str());
 }
 
-fn builtin_sources() -> impl Iterator<Item = (String, String)> {
-    BUILTIN.iter().map(|(name, json)| (format!("built-in {name}"), json.to_string()))
-}
-
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
 
 fn registry() -> &'static Registry {
@@ -223,27 +201,7 @@ fn registry() -> &'static Registry {
 /// Loads built-in decks plus every `*.json` in `user_dir` (if it exists).
 /// Call after `scale::init` and `chord::init`.
 pub fn init(user_dir: Option<&Path>) -> Vec<String> {
-    let mut sources: Vec<(String, String)> = builtin_sources().collect();
-    let mut errors = Vec::new();
-    if let Some(dir) = user_dir {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                let mut paths: Vec<_> = entries
-                    .filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")))
-                    .collect();
-                paths.sort();
-                for path in paths {
-                    match std::fs::read_to_string(&path) {
-                        Ok(json) => sources.push((path.display().to_string(), json)),
-                        Err(e) => errors.push(format!("{}: {e}", path.display())),
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => errors.push(format!("{}: {e}", dir.display())),
-        }
-    }
+    let (sources, mut errors) = registry::sources(BUILTIN, user_dir);
     let (registry, more) = Registry::build(sources);
     errors.extend(more);
     if REGISTRY.set(registry).is_err() {

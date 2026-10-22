@@ -14,7 +14,7 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -23,6 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::analyzer::PitchReading;
 use crate::deck::DeckKind;
+use crate::registry;
 use crate::rng::Rng;
 use crate::theory::{nearest_note, Note, Position, Tuning};
 use crate::trainer::PositionStats;
@@ -111,29 +112,14 @@ struct Registry {
 }
 
 impl Registry {
-    fn build(sources: impl IntoIterator<Item = (String, String)>) -> (Self, Vec<String>) {
-        let mut errors = Vec::new();
-        let mut ids = HashSet::new();
-        let mut entries = Vec::new();
-        for (source, json) in sources {
-            match ChordVoicing::parse(&source, &json) {
-                Ok(def) if !ids.insert(def.id.clone()) => {
-                    errors.push(format!("{source}: id \"{}\" is already taken; skipped", def.id))
-                }
-                Ok(def) => entries.push(def),
-                Err(e) => errors.push(e),
-            }
-        }
+    fn build(sources: impl IntoIterator<Item = registry::Source>) -> (Self, Vec<String>) {
+        let (entries, errors) = registry::parse_all(sources, ChordVoicing::parse, |c| &c.id);
         (Self { entries }, errors)
     }
 
     fn builtin() -> (Self, Vec<String>) {
-        Self::build(builtin_sources())
+        Self::build(registry::builtin_sources(BUILTIN))
     }
-}
-
-fn builtin_sources() -> impl Iterator<Item = (String, String)> {
-    BUILTIN.iter().map(|(name, json)| (format!("built-in {name}"), json.to_string()))
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
@@ -150,27 +136,7 @@ fn registry() -> &'static Registry {
 
 /// Loads built-in chords plus every `*.json` in `user_dir` (if it exists).
 pub fn init(user_dir: Option<&Path>) -> Vec<String> {
-    let mut sources: Vec<(String, String)> = builtin_sources().collect();
-    let mut errors = Vec::new();
-    if let Some(dir) = user_dir {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                let mut paths: Vec<_> = entries
-                    .filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")))
-                    .collect();
-                paths.sort();
-                for path in paths {
-                    match std::fs::read_to_string(&path) {
-                        Ok(json) => sources.push((path.display().to_string(), json)),
-                        Err(e) => errors.push(format!("{}: {e}", path.display())),
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => errors.push(format!("{}: {e}", dir.display())),
-        }
-    }
+    let (sources, mut errors) = registry::sources(BUILTIN, user_dir);
     let (registry, more) = Registry::build(sources);
     errors.extend(more);
     if REGISTRY.set(registry).is_err() {

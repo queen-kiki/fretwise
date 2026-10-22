@@ -28,7 +28,6 @@
 //! skipped with a message, never fatal. Every scale lives in one process-wide
 //! registry, so [`Scale`] stays a small `Copy` value.
 
-use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
 use std::path::Path;
@@ -36,6 +35,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::registry::{self, SortKey};
 use crate::theory::{pitch_class_name, Note};
 
 /// Interval names by semitones above the root. ASCII "b" rather than "♭" so
@@ -123,36 +123,19 @@ struct Registry {
 impl Registry {
     /// Collects scales, skipping bad files and repeated ids. Returns the
     /// registry and a message per skipped file.
-    fn build(sources: impl IntoIterator<Item = (String, String)>) -> (Self, Vec<String>) {
-        let mut errors = Vec::new();
-        let mut ids = HashSet::new();
-        let mut defs = Vec::new();
-        for (source, json) in sources {
-            match ScaleDef::parse(&source, &json) {
-                Ok(def) if !ids.insert(def.id.clone()) => {
-                    errors.push(format!("{source}: id \"{}\" is already taken; skipped", def.id))
-                }
-                Ok(def) => defs.push(def),
-                Err(e) => errors.push(e),
-            }
-        }
-
-        let group_order = |group: &str, defs: &[ScaleDef]| {
-            defs.iter().filter(|d| d.group == group).map(|d| d.order).min().unwrap_or(i32::MAX)
-        };
-        let keys: Vec<i32> = defs.iter().map(|d| group_order(&d.group, &defs)).collect();
-        let mut keyed: Vec<_> = keys.into_iter().zip(defs).collect();
-        keyed.sort_by(|(ga, a), (gb, b)| {
-            (ga, &a.group, a.order, &a.name, &a.id).cmp(&(gb, &b.group, b.order, &b.name, &b.id))
+    fn build(sources: impl IntoIterator<Item = registry::Source>) -> (Self, Vec<String>) {
+        let (defs, errors) = registry::parse_all(sources, ScaleDef::parse, |d| &d.id);
+        let defs = registry::sort_by_group(defs, |d| SortKey {
+            group: &d.group,
+            order: d.order,
+            name: &d.name,
+            id: &d.id,
         });
 
         let mut entries: Vec<Entry> = Vec::new();
         let mut groups: Vec<(String, Range<usize>)> = Vec::new();
-        for (_, def) in keyed {
-            match groups.last_mut() {
-                Some((name, range)) if *name == def.group => range.end += 1,
-                _ => groups.push((def.group.clone(), entries.len()..entries.len() + 1)),
-            }
+        for def in defs {
+            registry::add_to_groups(&mut groups, &def.group, entries.len());
             let mut degrees = DEGREES.map(String::from);
             if let Some(names) = &def.degrees {
                 for (&i, name) in def.intervals.iter().zip(names) {
@@ -166,12 +149,8 @@ impl Registry {
     }
 
     fn builtin() -> (Self, Vec<String>) {
-        Self::build(builtin_sources())
+        Self::build(registry::builtin_sources(BUILTIN))
     }
-}
-
-fn builtin_sources() -> impl Iterator<Item = (String, String)> {
-    BUILTIN.iter().map(|(name, json)| (format!("built-in {name}"), json.to_string()))
 }
 
 static REGISTRY: OnceLock<Registry> = OnceLock::new();
@@ -190,27 +169,7 @@ fn registry() -> &'static Registry {
 /// Call once at startup, before anything uses a scale; returns a message per
 /// file that was skipped. Without it, only the built-in scales are there.
 pub fn init(user_dir: Option<&Path>) -> Vec<String> {
-    let mut sources: Vec<(String, String)> = builtin_sources().collect();
-    let mut errors = Vec::new();
-    if let Some(dir) = user_dir {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                let mut paths: Vec<_> = entries
-                    .filter_map(|e| e.ok().map(|e| e.path()))
-                    .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")))
-                    .collect();
-                paths.sort();
-                for path in paths {
-                    match std::fs::read_to_string(&path) {
-                        Ok(json) => sources.push((path.display().to_string(), json)),
-                        Err(e) => errors.push(format!("{}: {e}", path.display())),
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => errors.push(format!("{}: {e}", dir.display())),
-        }
-    }
+    let (sources, mut errors) = registry::sources(BUILTIN, user_dir);
     let (registry, more) = Registry::build(sources);
     errors.extend(more);
     if REGISTRY.set(registry).is_err() {
