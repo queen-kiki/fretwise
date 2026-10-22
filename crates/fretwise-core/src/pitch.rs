@@ -70,13 +70,9 @@ impl Yin {
         // Cumulative mean normalization.
         d[0] = 1.0;
         let mut running = 0.0f32;
-        for tau in 1..=max_tau {
-            running += d[tau];
-            d[tau] = if running > 0.0 {
-                d[tau] * tau as f32 / running
-            } else {
-                1.0
-            };
+        for (tau, v) in d.iter_mut().enumerate().take(max_tau + 1).skip(1) {
+            running += *v;
+            *v = if running > 0.0 { *v * tau as f32 / running } else { 1.0 };
         }
 
         // First dip below the threshold, followed down to its local minimum.
