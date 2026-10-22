@@ -355,7 +355,6 @@ pub fn knob(ui: &mut Ui, id_salt: impl Hash, title: &str, index: &mut usize, cho
 
     let visuals = ui.visuals();
     let painter = ui.painter();
-    let accent = accent(ui);
     let hot = response.hovered() || response.dragged();
     painter.text(
         pos2(rect.center().x, rect.top() + 6.0),
@@ -378,7 +377,13 @@ pub fn knob(ui: &mut Ui, id_salt: impl Hash, title: &str, index: &mut usize, cho
 
     // Track and value arc, and a dot per step.
     painter.add(egui::Shape::line(arc(0.0, 1.0, r + 7.0), Stroke::new(3.0_f32, visuals.extreme_bg_color)));
-    painter.add(egui::Shape::line(arc(0.0, t, r + 7.0), Stroke::new(3.0_f32, accent)));
+    // The value arc runs blue → pink → white, the trans flag from edge to middle.
+    let steps = 24;
+    for i in 0..steps {
+        let (a, b) = (t * i as f32 / steps as f32, t * (i + 1) as f32 / steps as f32);
+        let color = crate::theme::pride_gradient((a + b) / 2.0);
+        painter.line_segment([at(angle(a), r + 7.0), at(angle(b), r + 7.0)], Stroke::new(3.0_f32, color));
+    }
     if n <= 24 {
         for i in 0..n {
             let ti = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
@@ -393,9 +398,9 @@ pub fn knob(ui: &mut Ui, id_salt: impl Hash, title: &str, index: &mut usize, cho
 
     // Body: a shadow, then stacked discs shifted up to fake a top light.
     let (edge, face) = if visuals.dark_mode {
-        (Color32::from_gray(28), Color32::from_gray(if hot { 84 } else { 72 }))
+        (Color32::from_rgb(26, 18, 24), Color32::from_rgb(if hot { 98 } else { 84 }, 66, 82))
     } else {
-        (Color32::from_gray(170), Color32::from_gray(if hot { 255 } else { 248 }))
+        (Color32::from_rgb(214, 170, 188), Color32::from_rgb(255, if hot { 250 } else { 244 }, 248))
     };
     painter.circle_filled(c + vec2(0.0, 2.5), r + 1.0, Color32::from_black_alpha(70));
     let layers = 8;

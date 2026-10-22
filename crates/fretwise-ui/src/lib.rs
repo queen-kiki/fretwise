@@ -4,6 +4,7 @@
 //! The host's only job is to hand [`FretwiseUi::show`] the latest
 //! [`PitchReading`] each frame, plus anything it adds through [`Host`].
 
+mod theme;
 mod widgets;
 
 use egui::{Color32, RichText};
@@ -14,11 +15,12 @@ use fretwise_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use theme::{paint_flag, rack_fill, TRANS_BLUE, TRANS_PINK};
 use widgets::{fretboard, knob, level_meter, segmented, toggle, tuner_gauge, Marker, NeckControls};
 
 const GOOD: Color32 = Color32::from_rgb(80, 200, 120);
 const BAD: Color32 = Color32::from_rgb(230, 90, 80);
-const TARGET: Color32 = Color32::from_rgb(90, 160, 255);
+const TARGET: Color32 = TRANS_BLUE;
 const HEARD: Color32 = Color32::from_rgb(240, 190, 70);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +65,7 @@ impl Host for () {}
 pub struct FretwiseUi {
     tab: Tab,
     settings_open: bool,
+    about_open: bool,
     theme: Theme,
     a4: f32,
     tuning: Tuning,
@@ -83,6 +86,7 @@ impl Default for FretwiseUi {
         Self {
             tab: Tab::Trainer,
             settings_open: false,
+            about_open: false,
             theme: Theme::System,
             a4: 440.0,
             tuning: Tuning::STANDARD,
@@ -176,6 +180,7 @@ impl FretwiseUi {
         }
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
+        theme::apply(ui.ctx());
         let theme = egui::ThemePreference::from(self.theme);
         if ui.ctx().options(|o| o.theme_preference) != theme {
             ui.ctx().set_theme(theme);
@@ -195,7 +200,11 @@ impl FretwiseUi {
         // Settings float over the page rather than squeezing it, so the
         // neck and controls keep their layout at any window size.
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.settings_open = false;
+            if self.about_open {
+                self.about_open = false;
+            } else {
+                self.settings_open = false;
+            }
         }
         if self.settings_open {
             let area = ui.max_rect();
@@ -212,6 +221,39 @@ impl FretwiseUi {
                     self.settings_panel(ui, now, host);
                 });
         }
+        if self.about_open {
+            self.about_window(ui.ctx());
+        }
+    }
+
+    fn about_window(&mut self, ctx: &egui::Context) {
+        let frame = egui::Frame::window(&ctx.style()).inner_margin(24).corner_radius(14);
+        egui::Window::new("About Fretwise")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .frame(frame)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_width(300.0);
+                ui.vertical_centered(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(300.0, 180.0), egui::Sense::hover());
+                    paint_flag(ui.painter(), rect, 10.0);
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("Fretwise").size(30.0).strong());
+                    ui.label(RichText::new("guitar fretboard trainer").weak());
+                    ui.add_space(10.0);
+                    ui.label(format!("version {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(format!("built {}", env!("FRETWISE_BUILD_DATE")));
+                    ui.add_space(12.0);
+                    let pink = if ui.visuals().dark_mode { TRANS_PINK } else { Color32::from_rgb(200, 70, 120) };
+                    ui.label(RichText::new("proudly slopped by kiki").italics().size(15.0).color(pink));
+                    ui.add_space(14.0);
+                    if ui.button("  Close  ").clicked() {
+                        self.about_open = false;
+                    }
+                });
+            });
     }
 
     fn header(&mut self, ui: &mut egui::Ui, reading: &PitchReading, warning: Option<String>) {
@@ -260,6 +302,13 @@ impl FretwiseUi {
                 if ui.add(close).on_hover_text("Close (Esc)").clicked() {
                     self.settings_open = false;
                 }
+                ui.add_space(6.0);
+                let about = ui.add(egui::Button::new("About").frame(false));
+                let (rect, flag) = ui.allocate_exact_size(egui::vec2(24.0, 15.0), egui::Sense::click());
+                paint_flag(ui.painter(), rect, 3.0);
+                if about.clicked() || flag.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.about_open = true;
+                }
             });
         });
         egui::ScrollArea::vertical().max_height(ui.ctx().screen_rect().height() - 130.0).show(ui, |ui| {
@@ -305,6 +354,7 @@ impl FretwiseUi {
             section(ui, "Appearance");
             let themes = [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")];
             segmented(ui, &mut self.theme, &themes, 14.0);
+
         });
     }
 
@@ -468,10 +518,10 @@ impl FretwiseUi {
                 let is_root = note.pitch_class() == scale.root % 12 && scale.kind != ScaleKind::Chromatic;
                 // Roots stand out from the rest, in either theme.
                 let (fill, text) = match (visuals.dark_mode, is_root) {
-                    (true, false) => (Color32::from_gray(60), visuals.text_color()),
-                    (true, true) => (Color32::from_gray(175), Color32::BLACK),
-                    (false, false) => (Color32::from_gray(215), visuals.text_color()),
-                    (false, true) => (Color32::from_gray(120), Color32::WHITE),
+                    (true, false) => (Color32::from_rgb(70, 50, 66), visuals.text_color()),
+                    (true, true) => (TRANS_PINK, Color32::BLACK),
+                    (false, false) => (Color32::from_rgb(240, 218, 228), visuals.text_color()),
+                    (false, true) => (Color32::from_rgb(214, 92, 140), Color32::WHITE),
                 };
                 markers.push(Marker { pos, color: fill, label: Some(self.label(note)), text });
             }
@@ -573,16 +623,6 @@ impl FretwiseUi {
         if ui.button("Reset progress").clicked() {
             self.trainer.reset_stats();
         }
-    }
-}
-
-/// Background for the control rack and the settings panel: a shade off the
-/// window, like a plug-in's faceplate.
-fn rack_fill(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_gray(36)
-    } else {
-        Color32::from_gray(232)
     }
 }
 

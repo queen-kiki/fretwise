@@ -27,6 +27,9 @@ move when you play.
 - **Strings**: click a string name left of the neck to leave it out.
 - Everything else (audio device, tuning, A4, prompt style, scale pattern,
   chime, theme) is in the ⚙ settings panel. Esc closes it.
+- The colours are soft pinks in light and dark mode, with the trans pride
+  blue, pink and white as accents. The flag next to "About" in settings opens
+  the About window (version and build date).
 
 ## UI widgets
 
