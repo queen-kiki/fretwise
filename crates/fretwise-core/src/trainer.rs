@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::rng::Rng;
-use crate::scale::Scale;
+use crate::scale::{self, Scale};
 use crate::theory::{Note, Position, Tuning};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,46 +237,24 @@ impl Trainer {
         self.wrong = 0;
     }
 
+    /// Every position of the scale in the fret range on the strings that are
+    /// on, untrimmed: the hand position fingering is worked out from.
     pub fn fingering_positions(&self) -> Vec<Position> {
         let c = &self.config;
-        let mut out = Vec::new();
-        for string in 0..6 {
-            if !c.strings[string] {
-                continue;
-            }
-            for fret in c.min_fret..=c.max_fret.max(c.min_fret) {
-                let pos = Position { string, fret };
-                if c.scale.contains(self.tuning.note_at(pos)) {
-                    out.push(pos);
-                }
-            }
-        }
-        out
+        c.scale.positions(self.tuning, c.min_fret..=c.max_fret.max(c.min_fret), c.strings)
     }
 
+    /// The positions to ask about: [`Self::fingering_positions`] trimmed to
+    /// whole octaves of the root.
     pub fn candidates(&self) -> Vec<Position> {
         let mut out = self.fingering_positions();
-        // Trim to whole octaves of the key's root when at least two roots fit,
-        // so a range runs root to root (e.g. A2..=A4 in box 1, without the
-        // stray C5 on top).
-        let root = self.config.scale.root % 12;
-        let roots = || out.iter().map(|&p| self.tuning.note_at(p)).filter(|n| n.pitch_class() == root);
-        if let (Some(lo), Some(hi)) = (roots().min(), roots().max()) {
-            if lo < hi {
-                out.retain(|&p| (lo..=hi).contains(&self.tuning.note_at(p)));
-            }
-        }
+        self.config.scale.trim_to_octaves(self.tuning, &mut out);
         out
     }
 
-    /// The scale's positions in pitch order, one per pitch: where a pitch is
-    /// on two strings, the lower fret wins, keeping the pattern in position.
+    /// The candidates in pitch order, one per pitch (see [`scale::walk`]).
     pub fn sequence(&self) -> Vec<Position> {
-        let tuning = self.tuning;
-        let mut seq = self.candidates();
-        seq.sort_by_key(|&p| (tuning.note_at(p), p.fret));
-        seq.dedup_by_key(|p| tuning.note_at(*p));
-        seq
+        scale::walk(self.tuning, self.candidates())
     }
 
     /// Start over, e.g. after the settings changed: patterns begin again

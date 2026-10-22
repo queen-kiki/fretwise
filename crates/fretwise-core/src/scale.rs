@@ -29,14 +29,14 @@
 //! registry, so [`Scale`] stays a small `Copy` value.
 
 use std::fmt;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use std::path::Path;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::registry::{self, SortKey};
-use crate::theory::{pitch_class_name, Note};
+use crate::theory::{pitch_class_name, Note, Position, Tuning};
 
 /// Interval names by semitones above the root. ASCII "b" rather than "♭" so
 /// any font can draw them.
@@ -309,6 +309,34 @@ impl Scale {
         &self.kind.entry().degrees[self.semitones(note) as usize]
     }
 
+    /// Every spot on the neck that plays a note of the scale, on the
+    /// `strings` that are on, within `frets`; string by string, low to high.
+    pub fn positions(self, tuning: Tuning, frets: RangeInclusive<u8>, strings: [bool; 6]) -> Vec<Position> {
+        let mut out = Vec::new();
+        for (string, _) in strings.iter().enumerate().filter(|(_, &on)| on) {
+            for fret in frets.clone() {
+                let pos = Position { string, fret };
+                if self.contains(tuning.note_at(pos)) {
+                    out.push(pos);
+                }
+            }
+        }
+        out
+    }
+
+    /// Keeps only whole octaves of the root when at least two roots are
+    /// there, so a range runs root to root (e.g. A2..=A4 in the A minor
+    /// pentatonic's box 1, without the stray C5 on top).
+    pub fn trim_to_octaves(self, tuning: Tuning, positions: &mut Vec<Position>) {
+        let root = self.root % 12;
+        let roots = || positions.iter().map(|&p| tuning.note_at(p)).filter(|n| n.pitch_class() == root);
+        if let (Some(lo), Some(hi)) = (roots().min(), roots().max()) {
+            if lo < hi {
+                positions.retain(|&p| (lo..=hi).contains(&tuning.note_at(p)));
+            }
+        }
+    }
+
     pub fn name(self) -> String {
         if self.kind.is_chromatic() {
             self.kind.name().to_string()
@@ -326,6 +354,14 @@ impl Scale {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+/// `positions` in pitch order, one per pitch: where a pitch is on two
+/// strings, the lower fret wins, keeping the pattern in position.
+pub fn walk(tuning: Tuning, mut positions: Vec<Position>) -> Vec<Position> {
+    positions.sort_by_key(|&p| (tuning.note_at(p), p.fret));
+    positions.dedup_by_key(|p| tuning.note_at(*p));
+    positions
 }
 
 #[cfg(test)]
@@ -422,6 +458,34 @@ mod tests {
         assert_eq!(f_lydian.degree(Note(47)), "#4"); // B2
         assert_eq!(f_lydian.name(), "F Lydian");
         assert_eq!(Scale { root: 4, kind: kind("chromatic") }.name(), "chromatic");
+    }
+
+    #[test]
+    fn box_trims_to_octaves_and_walks_in_pitch_order() {
+        let tuning = Tuning::STANDARD;
+        let a_minor_pent = Scale { root: 9, kind: kind("minor-pentatonic") };
+        let mut spots = a_minor_pent.positions(tuning, 5..=8, [true; 6]);
+        // Two notes per string, A2 on the low E up to C5 on the high E.
+        assert_eq!(spots.len(), 12);
+        assert_eq!(spots[0], Position { string: 0, fret: 5 });
+        a_minor_pent.trim_to_octaves(tuning, &mut spots);
+        assert_eq!(spots.len(), 11, "C5 above the top A is left out");
+        let names: Vec<String> = walk(tuning, spots).iter().map(|&p| tuning.note_at(p).to_string()).collect();
+        assert_eq!(names, ["A2", "C3", "D3", "E3", "G3", "A3", "C4", "D4", "E4", "G4", "A4"]);
+
+        // Strings that are off are skipped; one root means nothing to trim.
+        let mut low_e = a_minor_pent.positions(tuning, 5..=8, [true, false, false, false, false, false]);
+        assert_eq!(low_e, [Position { string: 0, fret: 5 }, Position { string: 0, fret: 8 }]);
+        a_minor_pent.trim_to_octaves(tuning, &mut low_e);
+        assert_eq!(low_e.len(), 2);
+    }
+
+    #[test]
+    fn walk_prefers_the_lower_fret_for_a_repeated_pitch() {
+        let tuning = Tuning::STANDARD;
+        // E3 is fret 7 on the A string and fret 2 on the D string.
+        let spots = vec![Position { string: 1, fret: 7 }, Position { string: 2, fret: 2 }];
+        assert_eq!(walk(tuning, spots), [Position { string: 2, fret: 2 }]);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use crate::analyzer::PitchReading;
 use crate::chord::{ChordKind, ChordListener, ChordVoicing};
 use crate::deck::DeckKind;
 use crate::rng::Rng;
-use crate::scale::{Scale, ScaleKind};
+use crate::scale::{self, Scale, ScaleKind};
 use crate::srs::{unix_seconds, Grade, SrsCard};
 use crate::theory::{Note, Position, Tuning};
 
@@ -539,32 +539,10 @@ impl LearnTrainer {
     /// `(box_positions, octave_trimmed_sequence)` for a scale in the configured fret range.
     fn scale_sequence(&self, scale: Scale) -> (Vec<Position>, Vec<Position>) {
         let c = &self.config;
-        let mut box_positions = Vec::new();
-        for string in 0..6 {
-            for fret in c.min_fret..=c.max_fret.max(c.min_fret) {
-                let pos = Position { string, fret };
-                if scale.contains(self.tuning.note_at(pos)) {
-                    box_positions.push(pos);
-                }
-            }
-        }
+        let box_positions = scale.positions(self.tuning, c.min_fret..=c.max_fret.max(c.min_fret), [true; 6]);
         let mut candidates = box_positions.clone();
-        let root = scale.root % 12;
-        let roots = || {
-            candidates
-                .iter()
-                .map(|&p| self.tuning.note_at(p))
-                .filter(|n| n.pitch_class() == root)
-        };
-        if let (Some(lo), Some(hi)) = (roots().min(), roots().max()) {
-            if lo < hi {
-                candidates.retain(|&p| (lo..=hi).contains(&self.tuning.note_at(p)));
-            }
-        }
-        let tuning = self.tuning;
-        candidates.sort_by_key(|&p| (tuning.note_at(p), p.fret));
-        candidates.dedup_by_key(|p| tuning.note_at(*p));
-        (box_positions, candidates)
+        scale.trim_to_octaves(self.tuning, &mut candidates);
+        (box_positions, scale::walk(self.tuning, candidates))
     }
 }
 
