@@ -27,6 +27,14 @@ move when you play.
 - **Fret range**: drag the lit strip of fret numbers under the neck. Drag an
   end to resize it, drag the middle to move it, or click a fret outside it.
 - **Strings**: click a string name left of the neck to leave it out.
+- **Fingering**: when the fret range fits one hand position (up to 5 frets,
+  e.g. 5 to 8), each dot of the pattern gets a small finger number: 1 index
+  to 4 pinky, 0 for an open string. It follows the standard "one finger per
+  fret" rule: the index sits on the first fret of the range, and the pinky
+  stretches to a fifth fret. Wider ranges hold several overlapping positions
+  with no single right answer, so they show no numbers. You can turn this off
+  in settings.
+- **Chromatic**: every note is in the scale, so only the key's root is marked.
 - Everything else (audio device, tuning, A4, prompt style, scale pattern,
   chime, theme) is in the ⚙ settings panel. Esc or a click outside closes it.
 - The colours are soft pinks in light and dark mode, with the trans pride

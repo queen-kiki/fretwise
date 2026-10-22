@@ -8,6 +8,7 @@
 
 pub mod analyzer;
 pub mod chime;
+pub mod fingering;
 pub mod pitch;
 pub mod scale;
 pub mod stabilizer;
@@ -16,6 +17,7 @@ pub mod trainer;
 
 pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
 pub use chime::Chime;
+pub use fingering::fingering;
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};
 pub use stabilizer::{NoteStabilizer, StableNote};
