@@ -7,12 +7,14 @@
 //! ([`Trainer`], [`NoteStabilizer`]) runs on the GUI thread.
 
 pub mod analyzer;
+pub mod chime;
 pub mod pitch;
 pub mod stabilizer;
 pub mod theory;
 pub mod trainer;
 
 pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
+pub use chime::Chime;
 pub use pitch::{PitchEstimate, Yin};
 pub use stabilizer::{NoteStabilizer, StableNote};
 pub use theory::{Note, NoteReading, Position, Tuning};

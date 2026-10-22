@@ -17,6 +17,7 @@ struct App {
     channel: usize,
     channel_count: u16,
     error: Option<String>,
+    output_error: Option<String>,
     store: Store,
     last_save: f64,
 }
@@ -45,6 +46,7 @@ impl App {
             channel,
             channel_count: 0,
             error: None,
+            output_error: None,
             store,
             last_save: 0.0,
         };
@@ -67,8 +69,10 @@ impl App {
 
     fn restart(&mut self) {
         self.error = None;
+        // Chimes go to the driver's default output, whatever the input is.
+        self.output_error = self.audio.start_output(self.host).err();
         let Some(device) = self.device.clone() else {
-            self.audio.stop();
+            self.audio.stop_input();
             self.error = Some("no input device".into());
             return;
         };
@@ -135,6 +139,9 @@ impl App {
                 }
                 _ => {}
             }
+            if let Some(e) = &self.output_error {
+                ui.weak(format!("no sound: {e}"));
+            }
         });
         if changed {
             self.restart();
@@ -151,6 +158,9 @@ impl eframe::App for App {
         });
         let reading = self.audio.shared.load();
         egui::CentralPanel::default().show(ctx, |ui| self.ui.show(ui, reading));
+        if self.ui.take_chime() {
+            self.audio.chime();
+        }
 
         // Saving is skipped when nothing changed, so checking often is cheap.
         let now = ctx.input(|i| i.time);

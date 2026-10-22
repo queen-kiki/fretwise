@@ -34,6 +34,8 @@ pub struct FretwiseUi {
     stabilizer: NoteStabilizer,
     trainer: Trainer,
     smoothed_cents: f32,
+    chime_enabled: bool,
+    chime_pending: bool,
 }
 
 impl Default for FretwiseUi {
@@ -49,6 +51,8 @@ impl Default for FretwiseUi {
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
             smoothed_cents: 0.0,
+            chime_enabled: true,
+            chime_pending: false,
         }
     }
 }
@@ -64,6 +68,8 @@ pub struct UiState {
     tuning: [Note; 6],
     trainer: TrainerConfig,
     progress: Progress,
+    /// Play a sound on correct answers.
+    chime: bool,
 }
 
 impl Default for UiState {
@@ -79,6 +85,7 @@ impl FretwiseUi {
             tab: state.tab,
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
+            chime_enabled: state.chime,
             ..defaults
         };
         let mut cfg = state.trainer;
@@ -97,14 +104,26 @@ impl FretwiseUi {
             tuning: self.tuning.strings,
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
+            chime: self.chime_enabled,
         }
+    }
+
+    /// True once per correct answer (when sound is on). The host plays the
+    /// sound, e.g. by triggering a [`fretwise_core::Chime`] in its output.
+    pub fn take_chime(&mut self) -> bool {
+        std::mem::take(&mut self.chime_pending)
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, reading: PitchReading) {
         let now = ui.input(|i| i.time);
         let held = self.stabilizer.update(now, &reading, self.a4);
         if self.tab == Tab::Trainer {
+            let before = self.trainer.feedback();
             self.trainer.update(now, held.map(|h| h.note));
+            let after = self.trainer.feedback();
+            if after != before && matches!(after, Some((Feedback::Correct { .. }, _))) {
+                self.chime_pending |= self.chime_enabled;
+            }
         }
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
@@ -275,6 +294,8 @@ impl FretwiseUi {
             ui.selectable_value(&mut cfg.style, PromptStyle::FretboardDot, "Fretboard dot");
             ui.separator();
             ui.checkbox(&mut cfg.naturals_only, "Naturals only");
+            ui.separator();
+            ui.checkbox(&mut self.chime_enabled, "Sound on correct");
         });
         ui.horizontal(|ui| {
             ui.label("Strings:");
