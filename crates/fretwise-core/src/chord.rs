@@ -368,8 +368,9 @@ pub struct ChordProgress {
 const STRUM_WINDOW: f64 = 1.4;
 /// Seconds a polyphonic FFT pitch class must persist before it counts (mirrors `NoteStabilizer`).
 const POLY_HOLD: f64 = 0.08;
-/// Minimum short-term input level (dBFS) to accept polyphonic chord notes.
-const CHORD_GATE_DB: f32 = -45.0;
+/// How far above the input gate (dB) the level must be to accept
+/// polyphonic chord notes: a strum is loud, and quieter spectra are noisy.
+const CHORD_GATE_ABOVE_DB: f32 = 10.0;
 /// How far (in cents) a polyphonic note may sit from the nearest semitone.
 const POLY_CENTS: f32 = 35.0;
 /// Seconds of silence after which a ringing chord and the notes heard so far are forgotten.
@@ -445,7 +446,7 @@ impl ChordListener {
     ) -> Option<ChordHeard> {
         let target_mask = voicing.pitch_class_mask(tuning);
 
-        let raw_poly_mask = if reading.level_db >= CHORD_GATE_DB {
+        let raw_poly_mask = if reading.level_db >= reading.gate_db + CHORD_GATE_ABOVE_DB {
             reading
                 .poly
                 .iter()
@@ -813,7 +814,7 @@ mod tests {
         t.restart(0.0);
         assert_eq!(t.current_chord().unwrap().name, "Em");
 
-        // 1) Strum via poly (held for at least POLY_HOLD, above CHORD_GATE_DB): E2 B2 G3.
+        // 1) Strum via poly (held for at least POLY_HOLD, loud enough): E2 B2 G3.
         let mut r = PitchReading { level_db: -20.0, ..Default::default() };
         for (slot, midi) in r.poly.iter_mut().zip([40u8, 47, 55]) {
             *slot = Note(midi).frequency(440.0);

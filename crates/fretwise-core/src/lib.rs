@@ -23,7 +23,7 @@ pub mod stabilizer;
 pub mod theory;
 pub mod trainer;
 
-pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch};
+pub use analyzer::{Analyzer, AnalyzerConfig, PitchReading, SharedPitch, DEFAULT_GATE_DB, GATE_RANGE_DB};
 pub use chime::Chime;
 pub use chord::{
     ChordChallenge, ChordFeedback, ChordKind, ChordOrder, ChordProgress, ChordTrainer, ChordTrainerConfig,

@@ -115,7 +115,7 @@ impl PolyDetector {
         let window = (0..FFT_LEN)
             .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FFT_LEN as f32).cos())
             .collect();
-        Self {
+        let mut detector = Self {
             decimation,
             lowpass: [Biquad::lowpass(sample_rate, cutoff, 0.5412), Biquad::lowpass(sample_rate, cutoff, 1.3066)],
             acc_count: 0,
@@ -124,7 +124,7 @@ impl PolyDetector {
             pos: 0,
             hop: ((rate * 0.04) as usize).max(1),
             since_last: 0,
-            gate: 10f32.powf(gate_db / 10.0),
+            gate: 0.0,
             window,
             re: vec![0.0; FFT_LEN],
             im: vec![0.0; FFT_LEN],
@@ -133,7 +133,14 @@ impl PolyDetector {
             peaks: Vec::with_capacity(FFT_LEN / 4),
             notes: Vec::with_capacity(FFT_LEN / 4),
             found: [0.0; MAX_NOTES],
-        }
+        };
+        detector.set_gate_db(gate_db);
+        detector
+    }
+
+    /// Moves the input gate (dBFS); below it nothing is reported.
+    pub fn set_gate_db(&mut self, gate_db: f32) {
+        self.gate = 10f32.powf(gate_db / 10.0);
     }
 
     /// Feed one sample. Returns true when [`Self::notes`] was just updated.

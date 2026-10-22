@@ -1,7 +1,7 @@
 //! The settings panel and the About window.
 
 use egui::{Color32, RichText};
-use fretwise_core::{PromptStyle, Tuning};
+use fretwise_core::{PromptStyle, Tuning, GATE_RANGE_DB};
 
 use crate::parts::{rack_group, section, setting_switch};
 use crate::theme::{self, paint_flag};
@@ -15,6 +15,20 @@ impl FretwiseUi {
         egui::ScrollArea::vertical().max_height(ui.ctx().screen_rect().height() - 130.0).show(ui, |ui| {
             section(ui, "Audio input");
             host.audio_settings(ui);
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 16.0;
+                let (lo, hi) = (*GATE_RANGE_DB.start() as i32, *GATE_RANGE_DB.end() as i32);
+                let levels: Vec<String> = (lo..=hi).map(|db| format!("{db} dB")).collect();
+                let levels: Vec<&str> = levels.iter().map(String::as_str).collect();
+                let mut i = ((self.gate_db.round() as i32).clamp(lo, hi) - lo) as usize;
+                if knob(ui, "gate", "Gate", &mut i, &levels) {
+                    self.gate_db = (lo + i as i32) as f32;
+                }
+                let hint = "Quieter input is ignored, so hum and string noise don't count as notes. \
+                            The IN meter turns grey below it.";
+                ui.add(egui::Label::new(RichText::new(hint).weak().size(12.0)).wrap());
+            });
 
             section(ui, "Instrument");
             let tuning_before = self.tuning;

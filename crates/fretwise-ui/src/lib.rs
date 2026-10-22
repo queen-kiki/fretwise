@@ -25,7 +25,7 @@ mod widgets;
 
 use fretwise_core::{
     ChordFeedback, ChordProgress, ChordTrainer, ChordTrainerConfig, Feedback, Grade, LearnConfig, LearnFeedback,
-    LearnProgress, LearnTrainer, Note, NoteStabilizer, PitchReading, Position, Progress, Trainer, TrainerConfig, Tuning,
+    LearnProgress, LearnTrainer, DEFAULT_GATE_DB, GATE_RANGE_DB, Note, NoteStabilizer, PitchReading, Position, Progress, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,8 @@ pub struct FretwiseUi {
     browser_filter: String,
     theme: Theme,
     a4: f32,
+    /// Input gate (dBFS), for the host to pass on to the analyzer.
+    gate_db: f32,
     tuning: Tuning,
     stabilizer: NoteStabilizer,
     trainer: Trainer,
@@ -118,6 +120,7 @@ impl Default for FretwiseUi {
             browser_filter: String::new(),
             theme: Theme::System,
             a4: 440.0,
+            gate_db: DEFAULT_GATE_DB,
             tuning: Tuning::STANDARD,
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
@@ -139,6 +142,8 @@ impl Default for FretwiseUi {
 pub struct UiState {
     tab: Tab,
     a4: f32,
+    /// Input gate in dBFS: quieter input is ignored.
+    gate_db: f32,
     /// Open strings, lowest first; matched against [`Tuning::ALL`] on load.
     tuning: [Note; 6],
     trainer: TrainerConfig,
@@ -173,6 +178,7 @@ impl FretwiseUi {
             settings_open: state.settings_open,
             theme: state.theme,
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
+            gate_db: if GATE_RANGE_DB.contains(&state.gate_db) { state.gate_db } else { defaults.gate_db },
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
             chime_enabled: state.chime,
             show_pattern: state.show_pattern,
@@ -201,6 +207,7 @@ impl FretwiseUi {
         UiState {
             tab: self.tab,
             a4: self.a4,
+            gate_db: self.gate_db,
             tuning: self.tuning.strings,
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
@@ -214,6 +221,12 @@ impl FretwiseUi {
             settings_open: self.settings_open,
             theme: self.theme,
         }
+    }
+
+    /// The input gate the player set, in dBFS. The host passes it to the
+    /// analyzer every frame with [`fretwise_core::SharedPitch::set_gate_db`].
+    pub fn gate_db(&self) -> f32 {
+        self.gate_db
     }
 
     /// True once per correct answer (when sound is on). The host plays the
@@ -351,6 +364,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gate_is_saved_and_checked_on_load() {
+        let ui = FretwiseUi { gate_db: -62.0, ..Default::default() };
+        let json = serde_json::to_string(&ui.state()).unwrap();
+        let back = FretwiseUi::from_state(serde_json::from_str(&json).unwrap());
+        assert_eq!(back.gate_db(), -62.0);
+        let silly: UiState = serde_json::from_str(r#"{"gate_db": 12.0}"#).unwrap();
+        assert_eq!(FretwiseUi::from_state(silly).gate_db(), DEFAULT_GATE_DB);
+    }
+
+    #[test]
     fn state_from_before_settings_panel_loads() {
         let old = r#"{ "tab": "Tuner", "a4": 442.0, "chime": false, "show_pattern": false }"#;
         let state: UiState = serde_json::from_str(old).unwrap();
@@ -358,6 +381,7 @@ mod tests {
         assert_eq!(state.theme, Theme::System);
         let ui = FretwiseUi::from_state(state.clone());
         assert_eq!(ui.state().a4, 442.0);
+        assert_eq!(ui.gate_db(), DEFAULT_GATE_DB);
         // Everything round-trips except the screen: the app always opens on Learn.
         assert_eq!(ui.state().tab, Tab::Learn);
         assert_eq!(UiState { tab: state.tab, ..ui.state() }, state);
