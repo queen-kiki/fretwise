@@ -12,6 +12,9 @@ use crate::rng::Rng;
 use crate::scale::{self, Scale};
 use crate::theory::{Note, Position, Tuning};
 
+/// Seconds between a correct answer and the next prompt.
+const ADVANCE_DELAY: f64 = 0.6;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptStyle {
     /// "Play C on the A string" — learn where notes live.
@@ -359,7 +362,7 @@ impl Trainer {
             }
             self.correct += 1;
             self.feedback = Some((Feedback::Correct { note, seconds }, now));
-            self.advance_at = Some(now + 0.6);
+            self.advance_at = Some(now + ADVANCE_DELAY);
         } else {
             if let Some(c) = self.current.as_mut() {
                 c.misses += 1;

@@ -18,6 +18,12 @@ use crate::scale::{self, Scale, ScaleKind};
 use crate::srs::{unix_seconds, Grade, SrsCard};
 use crate::theory::{Note, Position, Tuning};
 
+/// Seconds between a completed card and the next one, for a look at the
+/// result and a chance to re-grade it.
+const ADVANCE_DELAY: f64 = 1.1;
+/// Seconds left of the pause after a re-grade, to see the new grade.
+const REGRADE_DELAY: f64 = 0.6;
+
 /// Whether to show the scale pattern / chord diagram on the fretboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuideMode {
@@ -135,7 +141,8 @@ pub enum LearnFeedback {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LearnProgress {
-    /// Individual card key (`"scale:9:minor-pentatonic"` or `"chord:em-open"`) -> SM-2 state.
+    /// Card key (`"scale:minor-pentatonic"` or `"chord:em-open"`, see
+    /// [`LearnCard::key`]) to SM-2 state.
     pub cards: HashMap<String, SrsCard>,
     pub reviewed: u32,
     pub streak: u32,
@@ -341,7 +348,7 @@ impl LearnTrainer {
             *interval = reviewed.interval;
         }
         if self.advance_at.is_some() {
-            self.advance_at = Some(now + 0.6);
+            self.advance_at = Some(now + REGRADE_DELAY);
         }
         true
     }
@@ -533,7 +540,7 @@ impl LearnTrainer {
             },
             now,
         ));
-        self.advance_at = Some(now + 1.1);
+        self.advance_at = Some(now + ADVANCE_DELAY);
     }
 
     /// `(box_positions, octave_trimmed_sequence)` for a scale in the configured fret range.

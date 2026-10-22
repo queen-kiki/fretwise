@@ -1,7 +1,7 @@
 //! Anki-style SM-2 spaced repetition for fretboard positions and chords.
 //!
-//! Each item (a fretboard position or a chord voicing) has an [`SrsCard`]
-//! stored inside its [`crate::PositionStats`]. Because guitar practice happens
+//! Each Learn card (a scale or a chord voicing) has an [`SrsCard`], saved in
+//! [`crate::LearnProgress`] under the card's key. Because guitar practice happens
 //! hands-free with a live instrument, cards are graded automatically from
 //! response time and misses, with `1`–`4` keys available during the post-answer
 //! pause to override the grade (`1` Again, `2` Hard, `3` Good, `4` Easy).
@@ -37,15 +37,6 @@ impl Grade {
         }
     }
 
-    pub fn key_number(self) -> u8 {
-        match self {
-            Grade::Again => 1,
-            Grade::Hard => 2,
-            Grade::Good => 3,
-            Grade::Easy => 4,
-        }
-    }
-
     /// Auto-grade a note challenge from response time and wrong-note misses.
     pub fn for_note(seconds: f64, misses: u32) -> Self {
         if misses > 0 {
@@ -71,7 +62,7 @@ impl Grade {
     }
 }
 
-/// SM-2 state for one note position or chord.
+/// SM-2 state for one scale or chord card.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrsCard {
@@ -99,8 +90,8 @@ impl Default for SrsCard {
 impl SrsCard {
     /// True once the card has graduated past the initial learning steps
     /// (at least 2 consecutive good/easy reviews and an interval of >= 2 minutes).
-    /// Used by `DiagramMode::Auto` to hide the chord diagram so the player
-    /// recalls the shape from memory.
+    /// Used by [`crate::GuideMode::Auto`] to hide the shape so the player
+    /// recalls it from memory.
     pub fn is_memorized(&self) -> bool {
         self.reps >= 2 && self.interval >= 120.0
     }

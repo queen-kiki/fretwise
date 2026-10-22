@@ -2,8 +2,9 @@
 //!
 //! This is the standard "one finger per fret" position playing: the index
 //! finger sits on the first fret of the range you're practising (fret 1 for
-//! open position) and each finger covers the next fret up, so frets p, p+1, p+2, p+3 are fingers 1, 2, 3, 4. A pattern
-//! five frets wide is still one position. On a string that needs the fifth
+//! open position) and each finger covers the next fret up, so frets p, p+1,
+//! p+2, p+3 are fingers 1, 2, 3, 4. A pattern five frets wide is still one
+//! position. On a string that needs the fifth
 //! fret, the pinky stretches up to it. If that string also uses the fourth
 //! fret, the hand shifts up one fret on that string instead.
 //!

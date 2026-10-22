@@ -89,11 +89,6 @@ impl ChordVoicing {
             .fold(0u16, |m, pos| m | (1 << tuning.note_at(pos).pitch_class()))
     }
 
-    /// Sounded notes from lowest string to highest under `tuning`.
-    pub fn notes(&self, tuning: Tuning) -> Vec<Note> {
-        self.positions().into_iter().map(|p| tuning.note_at(p)).collect()
-    }
-
     /// Compact string-by-string fret diagram, e.g. `"x 3 2 0 1 0"`.
     pub fn shape_string(&self) -> String {
         self.frets
@@ -506,7 +501,7 @@ impl ChordListener {
 }
 
 /// Chord trainer: asks for a chord from the active pick and accepts either a
-/// full strum or a slow strum / arpeggio (see [`ChordListener`]).
+/// full strum (via [`PitchReading::poly`]) or a slow strum / arpeggio.
 pub struct ChordTrainer {
     pub config: ChordTrainerConfig,
     pub tuning: Tuning,
@@ -554,10 +549,6 @@ impl ChordTrainer {
 
     pub fn is_resolved(&self) -> bool {
         self.advance_at.is_some()
-    }
-
-    pub fn stats(&self, chord_id: &str) -> Option<&PositionStats> {
-        self.stats.get(chord_id)
     }
 
     pub fn progress(&self) -> ChordProgress {
