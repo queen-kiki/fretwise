@@ -143,7 +143,7 @@ impl FretwiseUi {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let skip = skip_button(ui, 56.0);
-                if skip.on_hover_text("Show the answer and move on").clicked() {
+                if skip.on_hover_text("Show the answer and move on (Space)").clicked() {
                     self.chord_trainer.skip(now);
                 }
             });

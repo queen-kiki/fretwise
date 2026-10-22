@@ -41,7 +41,7 @@ impl FretwiseUi {
     }
 
     /// Nothing due or new in the deck, and the done screen not dismissed.
-    fn learn_done(&self, now: f64) -> bool {
+    pub(crate) fn learn_done(&self, now: f64) -> bool {
         let (due, new_cards, _) = self.learn_trainer.deck_counts(now);
         due + new_cards == 0 && !self.keep_going && !self.learn_trainer.deck_cards().is_empty()
     }
@@ -400,7 +400,7 @@ impl FretwiseUi {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let skip = skip_button(ui, 56.0);
-                    if skip.on_hover_text("Grade Again (30s) and move on").clicked() {
+                    if skip.on_hover_text("Grade Again (30s) and move on (Space)").clicked() {
                         self.learn_trainer.skip(now);
                     }
                 });

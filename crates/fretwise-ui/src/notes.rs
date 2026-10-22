@@ -217,7 +217,7 @@ impl FretwiseUi {
                 segmented(ui, &mut cfg.labels, &[(Labels::NoteName, "Notes"), (Labels::Degree, "Degrees")], 15.0);
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if skip_button(ui, 56.0).on_hover_text("Skip: show the answer and move on").clicked() {
+                if skip_button(ui, 56.0).on_hover_text("Skip: show the answer and move on (Space)").clicked() {
                     self.trainer.skip(now);
                 }
             });
