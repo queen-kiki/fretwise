@@ -31,12 +31,16 @@ struct App {
     ui: FretwiseUi,
     store: Store,
     last_save: f64,
+    /// The saved audio settings, when their driver isn't available this run
+    /// (e.g. ASIO in a build without it), and the fallback opened instead.
+    /// The saved ones are written back until the player changes anything.
+    kept_audio: Option<(AudioSettings, AudioSettings)>,
 }
 
 impl App {
     fn new() -> Self {
         let (store, saved) = Store::open();
-        let audio = saved.audio;
+        let audio = saved.audio.clone();
         let saved_host = AudioEngine::hosts()
             .into_iter()
             .find(|h| Some(h.name()) == audio.host.as_deref());
@@ -62,6 +66,8 @@ impl App {
             output_error: None,
         };
         audio.restart();
+        let kept_audio = (saved_host.is_none() && saved.audio != AudioSettings::default())
+            .then(|| (saved.audio, audio.settings()));
         let mut ui = FretwiseUi::from_state(saved.ui);
         ui.set_scope(audio.engine.scope.clone());
         Self {
@@ -69,18 +75,21 @@ impl App {
             ui,
             store,
             last_save: 0.0,
+            kept_audio,
         }
     }
 
     fn save(&mut self) {
+        let mut audio = self.audio.settings();
+        if let Some((saved, fallback)) = &self.kept_audio {
+            if audio == *fallback {
+                audio = saved.clone();
+            } else {
+                self.kept_audio = None;
+            }
+        }
         let state = SavedState {
-            audio: AudioSettings {
-                host: Some(self.audio.host.name().to_string()),
-                device: self.audio.device.clone(),
-                channel: self.audio.channel,
-                output: self.audio.output.clone(),
-                output_pair: self.audio.output_pair,
-            },
+            audio,
             ui: self.ui.state(),
             ..Default::default()
         };
@@ -89,6 +98,16 @@ impl App {
 }
 
 impl AudioSetup {
+    fn settings(&self) -> AudioSettings {
+        AudioSettings {
+            host: Some(self.host.name().to_string()),
+            device: self.device.clone(),
+            channel: self.channel,
+            output: self.output.clone(),
+            output_pair: self.output_pair,
+        }
+    }
+
     /// ASIO loads one driver at a time, so there the output is the input
     /// device itself (its "default" would be whichever driver is listed first).
     fn shares_device(&self) -> bool {

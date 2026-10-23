@@ -10,8 +10,10 @@ name = "fretwise"
 path = "src/main.rs"
 
 [features]
-# Native ASIO on Windows. Needs LLVM (libclang) and the Steinberg ASIO SDK;
-# set CPAL_ASIO_DIR to the SDK folder or cpal's build script downloads it.
+default = ["asio"]
+# Native ASIO on Windows (a no-op elsewhere). Needs LLVM (libclang) and the
+# Steinberg ASIO SDK; set CPAL_ASIO_DIR to the SDK folder or cpal's build
+# script downloads it. Build with --no-default-features to go without.
 asio = ["cpal/asio"]
 
 [dependencies]
