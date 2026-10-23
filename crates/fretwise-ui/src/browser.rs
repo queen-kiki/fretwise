@@ -134,7 +134,7 @@ impl FretwiseUi {
                 self.learn_trainer.reset_card(&key);
             }
             if let Some(card) = picked_card {
-                self.tab = Tab::Learn;
+                self.set_tab(Tab::Learn);
                 self.keep_going = true;
                 self.learn_trainer.select_card(card, now);
                 close_requested = true;

@@ -197,6 +197,10 @@ pub enum Icon {
     Practice,
     /// Tuner: Lucide "gauge".
     Tuner,
+    /// Learn, home: Lucide "graduation-cap".
+    Learn,
+    /// Jam: Lucide "guitar".
+    Jam,
     /// Stats: Lucide "chart-no-axes-column".
     Stats,
     /// Back to Learn: Lucide "chevron-left".
@@ -214,6 +218,8 @@ impl Icon {
         match self {
             Icon::Practice => &crate::icons::EIGHTH_NOTE,
             Icon::Tuner => &crate::icons::GAUGE,
+            Icon::Learn => &crate::icons::GRADUATION_CAP,
+            Icon::Jam => &crate::icons::GUITAR,
             Icon::Stats => &crate::icons::CHART,
             Icon::Back => &crate::icons::CHEVRON_LEFT,
             Icon::Amp => &crate::icons::SPEAKER,
@@ -342,9 +348,13 @@ pub fn wippschalter(ui: &mut Ui, on: &mut bool) -> Response {
         .on_hover_text(if *on { "Amp power: I (On)" } else { "Amp power: 0 (Off)" })
 }
 
-/// An item inside the header's sandwich menu, keeping its Lucide icon alongside the label.
-pub fn menu_item(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> bool {
-    let size = vec2(170.0, 32.0);
+/// Width of an item in the header's sandwich menu.
+pub const MENU_WIDTH: f32 = 190.0;
+
+/// An item inside the header's sandwich menu, keeping its Lucide icon alongside the label,
+/// and its keyboard shortcut (e.g. "F3") as a dark key cap on the right.
+pub fn menu_item(ui: &mut Ui, icon: Icon, label: &str, shortcut: Option<&str>, active: bool) -> bool {
+    let size = vec2(MENU_WIDTH, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let visuals = ui.visuals().clone();
     let accent = accent(ui);
@@ -380,5 +390,17 @@ pub fn menu_item(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> bool {
         FontId::proportional(14.0),
         text_color,
     );
+    if let Some(key) = shortcut {
+        let font = FontId::monospace(11.0);
+        let galley = ui.painter().layout_no_wrap(key.to_string(), font, visuals.text_color().gamma_multiply(0.8));
+        let cap = Rect::from_center_size(
+            pos2(rect.right() - 8.0 - (galley.size().x + 12.0) / 2.0, rect.center().y),
+            vec2(galley.size().x + 12.0, 20.0),
+        );
+        let shade = if visuals.dark_mode { 120 } else { 28 };
+        ui.painter().rect_filled(cap, 5.0, Color32::from_black_alpha(shade));
+        ui.painter().rect_stroke(cap, 5.0, Stroke::new(1.0_f32, Color32::from_black_alpha(shade / 2)), StrokeKind::Inside);
+        ui.painter().galley(cap.center() - galley.size() / 2.0, galley, Color32::PLACEHOLDER);
+    }
     response.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }

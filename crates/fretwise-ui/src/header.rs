@@ -10,7 +10,7 @@ use crate::parts::{caption_color, readout, token};
 use crate::theme::{self, BAD, GOOD, TRANS_BLUE, TRANS_PINK};
 use crate::widgets::{
     amp_button, flame, icon_button, level_meter, menu_item, output_meter, paint_embossed_plate, segmented, session_bar,
-    wippschalter, Icon,
+    wippschalter, Icon, MENU_WIDTH,
 };
 use crate::{icons, FretwiseUi, Tab};
 
@@ -24,11 +24,12 @@ impl FretwiseUi {
             } else {
                 // A tool screen: the way home, its name, and for free
                 // practice which drill.
-                if icon_button(ui, Icon::Back, false).on_hover_text("Back to Learn").clicked() {
-                    self.tab = Tab::Learn;
+                if icon_button(ui, Icon::Back, false).on_hover_text("Back to Learn (F1)").clicked() {
+                    self.set_tab(Tab::Learn);
                 }
                 let title = match self.tab {
                     Tab::Trainer | Tab::Chords => "Free practice",
+                    Tab::Jam => "Jam",
                     Tab::Tuner => "Tuner",
                     Tab::Progress => "Stats",
                     Tab::Learn => "",
@@ -46,26 +47,28 @@ impl FretwiseUi {
                 let menu_id = egui::Id::new("fretwise_sandwich_menu");
                 let menu_open = ui.memory(|m| m.is_popup_open(menu_id));
                 let menu_btn = icon_button(ui, Icon::Menu, menu_open || self.settings_open)
-                    .on_hover_text("Menu: practice, tuner, stats, settings");
+                    .on_hover_text("Menu: learn, practice, jam, tuner, stats, settings");
                 if menu_btn.clicked() {
                     ui.memory_mut(|m| m.toggle_popup(menu_id));
                 }
                 egui::popup_below_widget(ui, menu_id, &menu_btn, PopupCloseBehavior::CloseOnClick, |ui| {
-                    ui.set_min_width(174.0);
+                    ui.set_min_width(MENU_WIDTH + 4.0);
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    let tools = [
+                    let modes = [
+                        (Icon::Learn, Tab::Learn, "Learn"),
                         (Icon::Practice, Tab::Trainer, "Free practice"),
+                        (Icon::Jam, Tab::Jam, "Jam"),
                         (Icon::Tuner, Tab::Tuner, "Tuner"),
                         (Icon::Stats, Tab::Progress, "Stats"),
                     ];
-                    for (icon, tab, label) in tools {
+                    for (icon, tab, label) in modes {
                         let on = self.tab == tab || (tab == Tab::Trainer && self.tab == Tab::Chords);
-                        if menu_item(ui, icon, label, on) {
-                            self.tab = if on { Tab::Learn } else { tab };
+                        if menu_item(ui, icon, label, tab.shortcut().map(|(_, name)| name), on) {
+                            self.set_tab(if on { Tab::Learn } else { tab });
                         }
                     }
                     ui.separator();
-                    if menu_item(ui, Icon::Settings, "Settings", self.settings_open) {
+                    if menu_item(ui, Icon::Settings, "Settings", None, self.settings_open) {
                         self.settings_open = !self.settings_open;
                     }
                 });

@@ -15,6 +15,7 @@ pub mod fft;
 pub mod fingering;
 pub mod fx;
 pub mod gate;
+pub mod jam;
 pub mod learn;
 pub mod pitch;
 pub mod poly;
@@ -37,6 +38,7 @@ pub use chord::{
 pub use deck::{DeckDef, DeckKind};
 pub use fingering::fingering;
 pub use gate::NoiseGate;
+pub use jam::{name_chord, JamHeard, JamListener, JamName};
 pub use fx::{
     AmpConfig, Cabinet, CleanAmp, Effect, EffectChain, SampleRing, SharedAmp, StereoEffect, AMP_GAIN_RANGE_DB,
     AMP_LEVEL_RANGE_DB, AMP_TONE_RANGE, CAB_MIC_RANGE, CHORUS_DEPTH_RANGE, CHORUS_MIX_RANGE, CHORUS_RATE_RANGE,

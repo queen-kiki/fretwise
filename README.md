@@ -46,10 +46,11 @@ Fretwise only listens to your dry guitar signal and plays a short chime when you
 - **Free practice**:
   - **Notes** — Drills individual notes or full scale runs in any key and scale, weighting the prompt toward positions you miss or play slowly. Drag the highlighted strip of fret numbers under the neck to lock drills to a specific fret range, or click string numbers on the left (1 = high E, 6 = low E) to mute strings out of the drill.
   - **Chords** — Drills chords by family, single chord, or Learn deck, recognizing both full strums and picked arpeggios. With **Diagram** set to *Auto*, shapes are shown while you learn them and hidden once you play them cleanly a few times in a row.
+- **Jam** — Play freely through the amp: the effects rack opens and a screen over the darkened neck names what you play — a single note with its cents, an interval, or a chord (including slash chords and extended voicings), with the last few chords listed underneath.
 - **Tuner** — Chromatic tuner with cents gauge and string indicators.
 - **Stats** — Fretboard heatmap of your first-try accuracy and average response time across every string and fret.
 
-Press **Space** at any time during a drill to skip the current prompt.
+Press **Space** at any time during a drill to skip the current prompt. **F1**–**F5** switch between Learn, Free practice, Jam, Tuner and Stats; the menu shows each mode's key.
 
 ## Custom scales, chords & decks
 

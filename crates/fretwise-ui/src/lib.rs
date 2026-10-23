@@ -5,7 +5,7 @@
 //! [`PitchReading`] each frame, plus anything it adds through [`Host`].
 //!
 //! This file holds the state, what's saved, and the frame loop. Each screen
-//! is its own module (`learn`, `notes`, `chords`, `tuner`, `stats`, plus the
+//! is its own module (`learn`, `notes`, `chords`, `jam`, `tuner`, `stats`, plus the
 //! `header`, `settings` and the deck `browser`), all adding methods to
 //! [`FretwiseUi`]; `parts` has what they share, `widgets` the custom-painted
 //! controls, and `theme` the colours and fonts.
@@ -15,6 +15,7 @@ mod chords;
 mod fx_rack;
 mod header;
 mod icons;
+mod jam;
 mod learn;
 mod notes;
 mod parts;
@@ -26,11 +27,12 @@ mod tuner;
 mod widgets;
 
 use fretwise_core::{
-    AmpConfig, ChordFeedback, ChordProgress, ChordTrainer, ChordTrainerConfig, Feedback, Grade, LearnConfig, LearnFeedback,
-    LearnProgress, LearnTrainer, DEFAULT_GATE_DB, GATE_RANGE_DB, Note, NoteStabilizer, PitchReading, Position, Progress, Trainer, TrainerConfig, Tuning,
+    AmpConfig, ChordFeedback, ChordProgress, ChordTrainer, ChordTrainerConfig, Feedback, Grade, JamListener, LearnConfig,
+    LearnFeedback, LearnProgress, LearnTrainer, DEFAULT_GATE_DB, GATE_RANGE_DB, Note, NoteStabilizer, PitchReading, Position, Progress, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
 
+use jam::JamView;
 use parts::NECK_FRETS;
 use scope::{ScopeConfig, ScopeScreen};
 
@@ -44,6 +46,24 @@ enum Tab {
     Chords,
     Learn,
     Progress,
+    Jam,
+}
+
+impl Tab {
+    /// The function key that switches to this mode, and its name for the menu.
+    /// The chord drill shares free practice's.
+    fn shortcut(self) -> Option<(egui::Key, &'static str)> {
+        match self {
+            Tab::Learn => Some((egui::Key::F1, "F1")),
+            Tab::Trainer => Some((egui::Key::F2, "F2")),
+            Tab::Jam => Some((egui::Key::F3, "F3")),
+            Tab::Tuner => Some((egui::Key::F4, "F4")),
+            Tab::Progress => Some((egui::Key::F5, "F5")),
+            Tab::Chords => None,
+        }
+    }
+
+    const MODES: [Tab; 5] = [Tab::Learn, Tab::Trainer, Tab::Jam, Tab::Tuner, Tab::Progress];
 }
 
 /// Colour scheme; `System` follows the OS.
@@ -85,6 +105,8 @@ pub struct FretwiseUi {
     about_open: bool,
     browser_open: bool,
     amp_resized: bool,
+    /// Whether the rack was open before Jam opened it, to put it back after.
+    amp_before_jam: Option<bool>,
     /// Reviews done before this run, so the header can count this session's.
     session_start: Option<u32>,
     /// Carry on with the deck after the done-for-today screen.
@@ -109,6 +131,8 @@ pub struct FretwiseUi {
     trainer: Trainer,
     chord_trainer: ChordTrainer,
     learn_trainer: LearnTrainer,
+    jam_listener: JamListener,
+    jam: JamView,
     smoothed_cents: f32,
     chime_enabled: bool,
     chime_pending: bool,
@@ -127,6 +151,7 @@ impl Default for FretwiseUi {
             settings_open: false,
             amp_open: false,
             amp_resized: false,
+            amp_before_jam: None,
             about_open: false,
             browser_open: false,
             session_start: None,
@@ -146,6 +171,8 @@ impl Default for FretwiseUi {
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
             chord_trainer: ChordTrainer::new(Tuning::STANDARD, ChordTrainerConfig::default(), seed ^ 0x9e37_79b9),
             learn_trainer: LearnTrainer::new(Tuning::STANDARD, LearnConfig::default(), seed ^ 0x517c_c1b7),
+            jam_listener: JamListener::default(),
+            jam: JamView::default(),
             smoothed_cents: 0.0,
             chime_enabled: true,
             chime_pending: false,
@@ -248,7 +275,8 @@ impl FretwiseUi {
             show_pattern: self.show_pattern,
             show_fingering: self.show_fingering,
             settings_open: self.settings_open,
-            amp_open: self.amp_open,
+            // Jam opens the rack for itself; save how the player left it.
+            amp_open: self.amp_before_jam.unwrap_or(self.amp_open),
             theme: self.theme,
         }
     }
@@ -282,6 +310,32 @@ impl FretwiseUi {
         std::mem::take(&mut self.chime_pending)
     }
 
+    /// Switch screens. Jam is played through the amp, so it opens the effects
+    /// rack, and closes it again on the way out if it was closed before.
+    fn set_tab(&mut self, tab: Tab) {
+        if tab == self.tab {
+            return;
+        }
+        if tab == Tab::Jam {
+            self.amp_before_jam = Some(self.amp_open);
+            self.amp_open = true;
+        } else if let Some(was_open) = self.amp_before_jam.take() {
+            self.amp_open = was_open;
+        }
+        self.tab = tab;
+    }
+
+    /// F1-F5 switch modes, as listed in the menu. Free practice's key keeps
+    /// the chord drill if that's where you are.
+    fn switch_on_function_keys(&mut self, ui: &egui::Ui) {
+        for tab in Tab::MODES {
+            let Some((key, _)) = tab.shortcut() else { continue };
+            if ui.input(|i| i.key_pressed(key)) && !(tab == Tab::Trainer && self.tab == Tab::Chords) {
+                self.set_tab(tab);
+            }
+        }
+    }
+
     /// Space does what the skip button does (which is nothing in the pause
     /// after a right answer), unless a text field has the keyboard or a panel
     /// is open over the page.
@@ -301,6 +355,7 @@ impl FretwiseUi {
     pub fn show(&mut self, ui: &mut egui::Ui, reading: PitchReading, host: &mut dyn Host) {
         let now = ui.input(|i| i.time);
         let held = self.stabilizer.update(now, &reading, self.a4);
+        self.switch_on_function_keys(ui);
         self.skip_on_space(ui, now);
         if self.tab == Tab::Trainer {
             let before = self.trainer.feedback();
@@ -336,6 +391,9 @@ impl FretwiseUi {
                 self.chime_pending |= self.chime_enabled;
                 self.sparkle = Some((now, burst_at));
             }
+        } else if self.tab == Tab::Jam {
+            let heard = self.jam_listener.listen(now, &reading, held.map(|h| h.note), self.a4);
+            self.jam.update(now, heard);
         }
         // Pitch moves continuously; keep repainting while anything is heard.
         ui.ctx().request_repaint();
@@ -394,6 +452,7 @@ impl FretwiseUi {
             Tab::Trainer => self.trainer_tab(ui, now),
             Tab::Chords => self.chords_tab(ui, now),
             Tab::Learn => self.learn_tab(ui, now),
+            Tab::Jam => self.jam_tab(ui, now),
             Tab::Progress => self.progress_tab(ui),
         });
 

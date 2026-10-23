@@ -50,6 +50,8 @@ pub static CHEVRON_LEFT: Svg = lucide!("chevron-left");
 pub static SKIP_FORWARD: Svg = lucide!("skip-forward");
 pub static SPEAKER: Svg = lucide!("speaker");
 pub static MENU: Svg = lucide!("menu");
+pub static GUITAR: Svg = lucide!("guitar");
+pub static GRADUATION_CAP: Svg = lucide!("graduation-cap");
 
 /// The guitar-pick logo, in its own colours (paint it with white).
 pub static LOGO: Svg =

@@ -11,7 +11,7 @@ mod plate;
 use egui::{Color32, Ui};
 
 pub use controls::{
-    amp_button, dropdown, icon_button, menu_item, plain_button, segmented, skip_button, toggle, wippschalter, Icon,
+    amp_button, dropdown, icon_button, menu_item, plain_button, MENU_WIDTH, segmented, skip_button, toggle, wippschalter, Icon,
 };
 pub use fretboard::{fretboard, neck_point, sparkles, Marker, NeckControls};
 pub use knob::{knob, stepped_knob};
