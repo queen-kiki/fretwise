@@ -5,7 +5,7 @@ use fretwise_core::{PromptStyle, Tuning, GATE_RANGE_DB};
 
 use crate::parts::{rack_group, section, setting_switch};
 use crate::theme::{self, paint_flag};
-use crate::widgets::{dropdown, knob, segmented};
+use crate::widgets::{dropdown, segmented, stepped_knob};
 use crate::{icons, FretwiseUi, Host, Theme};
 
 impl FretwiseUi {
@@ -18,13 +18,8 @@ impl FretwiseUi {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 16.0;
-                let (lo, hi) = (*GATE_RANGE_DB.start() as i32, *GATE_RANGE_DB.end() as i32);
-                let levels: Vec<String> = (lo..=hi).map(|db| format!("{db} dB")).collect();
-                let levels: Vec<&str> = levels.iter().map(String::as_str).collect();
-                let mut i = ((self.gate_db.round() as i32).clamp(lo, hi) - lo) as usize;
-                if knob(ui, "gate", "Gate", &mut i, &levels) {
-                    self.gate_db = (lo + i as i32) as f32;
-                }
+                let gates = *GATE_RANGE_DB.start() as i32..=*GATE_RANGE_DB.end() as i32;
+                stepped_knob(ui, "gate", "Gate", &mut self.gate_db, gates, |db| format!("{db} dB"));
                 let hint = "Quieter input is ignored, so hum and string noise don't count as notes. \
                             The IN meter turns grey below it.";
                 ui.add(egui::Label::new(RichText::new(hint).weak().size(12.0)).wrap());
@@ -41,12 +36,7 @@ impl FretwiseUi {
                 });
                 // Whole hertz, as tuners show it; a saved fractional A4 stays
                 // until the knob is turned.
-                let refs: Vec<String> = (415..=466).map(|hz| format!("{hz} Hz")).collect();
-                let refs: Vec<&str> = refs.iter().map(String::as_str).collect();
-                let mut i = (self.a4.round() as usize).clamp(415, 466) - 415;
-                if knob(ui, "a4", "A4", &mut i, &refs) {
-                    self.a4 = (415 + i) as f32;
-                }
+                stepped_knob(ui, "a4", "A4", &mut self.a4, 415..=466, |hz| format!("{hz} Hz"));
             });
             if self.tuning != tuning_before {
                 self.trainer.tuning = self.tuning;
@@ -76,13 +66,6 @@ impl FretwiseUi {
             section(ui, "Appearance");
             let themes = [(Theme::System, "System"), (Theme::Dark, "Dark"), (Theme::Light, "Light")];
             segmented(ui, &mut self.theme, &themes, 14.0);
-
-            // Tucked away at the bottom, where the curious will find it.
-            ui.add_space(18.0);
-            let about = ui.add(egui::Label::new(RichText::new("about").size(12.0).weak()).sense(egui::Sense::click()));
-            if about.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                self.about_open = true;
-            }
         });
     }
 

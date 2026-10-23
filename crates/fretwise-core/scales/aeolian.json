@@ -1,7 +1,7 @@
 {
   "id": "aeolian",
   "name": "Aeolian",
-  "group": "modes",
+  "group": "Modes",
   "order": 105,
   "intervals": [0, 2, 3, 5, 7, 8, 10],
   "degrees": ["1", "2", "b3", "4", "5", "b6", "b7"]

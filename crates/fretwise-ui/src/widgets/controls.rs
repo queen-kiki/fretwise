@@ -172,22 +172,6 @@ pub fn skip_button(ui: &mut Ui, size: f32) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// The settings gear (Lucide), brighter when hovered, accent when open.
-pub fn gear_button(ui: &mut Ui, on: bool) -> Response {
-    let size = 26.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
-    let visuals = ui.visuals();
-    let color = if on {
-        accent(ui)
-    } else if response.hovered() {
-        visuals.strong_text_color()
-    } else {
-        visuals.text_color()
-    };
-    crate::icons::paint(ui.painter(), rect, &crate::icons::SETTINGS, color);
-    response.on_hover_cursor(CursorIcon::PointingHand)
-}
-
 /// A quiet painted button in the dropdown's sunken style.
 pub fn plain_button(ui: &mut Ui, text: &str, text_size: f32) -> Response {
     let font = FontId::proportional(text_size);
@@ -206,7 +190,7 @@ pub fn plain_button(ui: &mut Ui, text: &str, text_size: f32) -> Response {
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// Header tools, all Lucide icons like the gear.
+/// Header and menu icons, all Lucide.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     /// Free practice: Lucide "eighth-note".
@@ -217,6 +201,26 @@ pub enum Icon {
     Stats,
     /// Back to Learn: Lucide "chevron-left".
     Back,
+    /// Practice amp drawer: Lucide "speaker".
+    Amp,
+    /// Sandwich menu: Lucide "menu".
+    Menu,
+    /// Settings gear: Lucide "settings".
+    Settings,
+}
+
+impl Icon {
+    fn glyph(self) -> &'static crate::icons::Svg {
+        match self {
+            Icon::Practice => &crate::icons::EIGHTH_NOTE,
+            Icon::Tuner => &crate::icons::GAUGE,
+            Icon::Stats => &crate::icons::CHART,
+            Icon::Back => &crate::icons::CHEVRON_LEFT,
+            Icon::Amp => &crate::icons::SPEAKER,
+            Icon::Menu => &crate::icons::MENU,
+            Icon::Settings => &crate::icons::SETTINGS,
+        }
+    }
 }
 
 pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
@@ -230,12 +234,151 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> Response {
     } else {
         visuals.text_color()
     };
-    let glyph = match icon {
-        Icon::Practice => &crate::icons::EIGHTH_NOTE,
-        Icon::Tuner => &crate::icons::GAUGE,
-        Icon::Stats => &crate::icons::CHART,
-        Icon::Back => &crate::icons::CHEVRON_LEFT,
-    };
-    crate::icons::paint(ui.painter(), rect, glyph, color);
+    crate::icons::paint(ui.painter(), rect, icon.glyph(), color);
     response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// The amp drawer toggle icon: turns muted grey when the amp Wippschalter is disabled.
+pub fn amp_button(ui: &mut Ui, open: bool, enabled: bool) -> Response {
+    let size = 24.0;
+    let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+    let visuals = ui.visuals();
+    let color = if !enabled {
+        visuals.weak_text_color().gamma_multiply(if response.hovered() { 0.65 } else { 0.40 })
+    } else if open {
+        accent(ui)
+    } else if response.hovered() {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+    crate::icons::paint(ui.painter(), rect, Icon::Amp.glyph(), color);
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+/// Horizontal stylized glowing "0 | I" Wippschalter (hardware rocker switch).
+pub fn wippschalter(ui: &mut Ui, on: &mut bool) -> Response {
+    let size = vec2(46.0, 22.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let t = ui.ctx().animate_bool(response.id, *on);
+    let visuals = ui.visuals();
+    let painter = ui.painter();
+
+    // Soft outer neon glow when switched to 'I'
+    if t > 0.01 {
+        let glow_col = crate::theme::TRANS_PINK.gamma_multiply(0.28 * t);
+        painter.rect_filled(rect.expand(2.5), 6.5, glow_col);
+    }
+
+    // Outer recessed housing bezel
+    let bezel_stroke = lerp_color(
+        visuals.widgets.noninteractive.bg_stroke.color,
+        crate::theme::TRANS_PINK,
+        t * 0.75,
+    );
+    painter.rect_filled(rect, 4.5, visuals.extreme_bg_color);
+    painter.rect_stroke(rect, 4.5, Stroke::new(1.0_f32, bezel_stroke), StrokeKind::Inside);
+
+    let inner = rect.shrink(2.0);
+    let mid_x = inner.center().x;
+    let left_half = Rect::from_min_max(inner.min, pos2(mid_x, inner.bottom()));
+    let right_half = Rect::from_min_max(pos2(mid_x, inner.top()), inner.max);
+
+    // Left rocker face ('0'): sunken when off, raised when on.
+    let left_fill = lerp_color(
+        visuals.extreme_bg_color,
+        visuals.widgets.inactive.bg_fill,
+        t,
+    );
+    painter.rect_filled(left_half, 3.0, left_fill);
+
+    // Right rocker face ('I'): raised matte when off, pressed & glowing when on.
+    let lit_fill = accent(ui);
+    let right_fill = lerp_color(visuals.widgets.inactive.bg_fill, lit_fill, t);
+    painter.rect_filled(right_half, 3.0, right_fill);
+    if t > 0.05 {
+        let sheen = crate::theme::TRANS_PINK.gamma_multiply(0.35 * t);
+        painter.rect_filled(right_half.shrink(1.5), 2.0, sheen);
+    }
+
+    // Center pivot ridge line
+    painter.line_segment(
+        [pos2(mid_x, inner.top() + 1.0), pos2(mid_x, inner.bottom() - 1.0)],
+        Stroke::new(1.2_f32, Color32::from_black_alpha(110)),
+    );
+
+    // '0' and 'I' markings
+    let zero_col = lerp_color(
+        visuals.text_color().gamma_multiply(0.85),
+        visuals.weak_text_color().gamma_multiply(0.55),
+        t,
+    );
+    let one_col = lerp_color(
+        visuals.weak_text_color().gamma_multiply(0.55),
+        Color32::WHITE,
+        t,
+    );
+    painter.text(
+        left_half.center(),
+        egui::Align2::CENTER_CENTER,
+        "0",
+        FontId::proportional(11.5),
+        zero_col,
+    );
+    painter.text(
+        right_half.center(),
+        egui::Align2::CENTER_CENTER,
+        "I",
+        FontId::proportional(12.0),
+        one_col,
+    );
+
+    response
+        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_text(if *on { "Amp power: I (On)" } else { "Amp power: 0 (Off)" })
+}
+
+/// An item inside the header's sandwich menu, keeping its Lucide icon alongside the label.
+pub fn menu_item(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> bool {
+    let size = vec2(170.0, 32.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let visuals = ui.visuals().clone();
+    let accent = accent(ui);
+    let hot = response.hovered();
+    let fill = if active {
+        accent.gamma_multiply(0.22)
+    } else if hot {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 6.0, fill);
+
+    let icon_color = if active {
+        accent
+    } else if hot {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+    let text_color = if active || hot {
+        visuals.strong_text_color()
+    } else {
+        visuals.text_color()
+    };
+
+    let icon_rect = Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(18.0, 18.0));
+    crate::icons::paint(ui.painter(), icon_rect, icon.glyph(), icon_color);
+    ui.painter().text(
+        pos2(icon_rect.right() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(14.0),
+        text_color,
+    );
+    response.on_hover_cursor(CursorIcon::PointingHand).clicked()
 }

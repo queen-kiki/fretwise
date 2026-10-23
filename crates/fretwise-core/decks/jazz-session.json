@@ -1,7 +1,7 @@
 {
   "id": "jazz-session",
-  "name": "jazz session",
-  "group": "collections",
+  "name": "Jazz Session",
+  "group": "Collections",
   "order": 205,
   "decks": [
     "jazz-chords"

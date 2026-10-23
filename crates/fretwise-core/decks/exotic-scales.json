@@ -1,7 +1,7 @@
 {
   "id": "exotic-scales",
-  "name": "exotic scales",
-  "group": "scales",
+  "name": "Exotic Scales",
+  "group": "Scales",
   "order": 105,
   "scales": [
     "phrygian-dominant",

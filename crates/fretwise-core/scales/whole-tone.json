@@ -1,7 +1,7 @@
 {
   "id": "whole-tone",
-  "name": "whole tone",
-  "group": "exotic",
+  "name": "Whole Tone",
+  "group": "Exotic",
   "order": 304,
   "intervals": [0, 2, 4, 6, 8, 10],
   "degrees": ["1", "2", "3", "#4", "#5", "b7"]

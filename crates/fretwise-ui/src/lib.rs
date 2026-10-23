@@ -12,6 +12,7 @@
 
 mod browser;
 mod chords;
+mod fx_rack;
 mod header;
 mod icons;
 mod learn;
@@ -24,7 +25,7 @@ mod tuner;
 mod widgets;
 
 use fretwise_core::{
-    ChordFeedback, ChordProgress, ChordTrainer, ChordTrainerConfig, Feedback, Grade, LearnConfig, LearnFeedback,
+    AmpConfig, ChordFeedback, ChordProgress, ChordTrainer, ChordTrainerConfig, Feedback, Grade, LearnConfig, LearnFeedback,
     LearnProgress, LearnTrainer, DEFAULT_GATE_DB, GATE_RANGE_DB, Note, NoteStabilizer, PitchReading, Position, Progress, Trainer, TrainerConfig, Tuning,
 };
 use serde::{Deserialize, Serialize};
@@ -78,8 +79,10 @@ impl Host for () {}
 pub struct FretwiseUi {
     tab: Tab,
     settings_open: bool,
+    amp_open: bool,
     about_open: bool,
     browser_open: bool,
+    amp_resized: bool,
     /// Reviews done before this run, so the header can count this session's.
     session_start: Option<u32>,
     /// Carry on with the deck after the done-for-today screen.
@@ -89,6 +92,10 @@ pub struct FretwiseUi {
     browser_filter: String,
     theme: Theme,
     a4: f32,
+    /// The practice amp's settings, for the host to pass on to its effect chain.
+    amp: AmpConfig,
+    /// The host's output level (dBFS), for the OUT meter.
+    out_level_db: f32,
     /// Input gate (dBFS), for the host to pass on to the analyzer.
     gate_db: f32,
     tuning: Tuning,
@@ -112,6 +119,8 @@ impl Default for FretwiseUi {
         Self {
             tab: Tab::Trainer,
             settings_open: false,
+            amp_open: false,
+            amp_resized: false,
             about_open: false,
             browser_open: false,
             session_start: None,
@@ -121,6 +130,8 @@ impl Default for FretwiseUi {
             theme: Theme::System,
             a4: 440.0,
             gate_db: DEFAULT_GATE_DB,
+            amp: AmpConfig::default(),
+            out_level_db: -100.0,
             tuning: Tuning::STANDARD,
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
@@ -142,6 +153,7 @@ impl Default for FretwiseUi {
 pub struct UiState {
     tab: Tab,
     a4: f32,
+    amp: AmpConfig,
     /// Input gate in dBFS: quieter input is ignored.
     gate_db: f32,
     /// Open strings, lowest first; matched against [`Tuning::ALL`] on load.
@@ -160,6 +172,7 @@ pub struct UiState {
     /// one hand position.
     show_fingering: bool,
     settings_open: bool,
+    amp_open: bool,
     theme: Theme,
 }
 
@@ -176,9 +189,11 @@ impl FretwiseUi {
             // Learn is home; the other screens are tools you step into.
             tab: Tab::Learn,
             settings_open: state.settings_open,
+            amp_open: state.amp_open,
             theme: state.theme,
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
             gate_db: if GATE_RANGE_DB.contains(&state.gate_db) { state.gate_db } else { defaults.gate_db },
+            amp: state.amp.sanitized(),
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
             chime_enabled: state.chime,
             show_pattern: state.show_pattern,
@@ -208,6 +223,7 @@ impl FretwiseUi {
             tab: self.tab,
             a4: self.a4,
             gate_db: self.gate_db,
+            amp: self.amp,
             tuning: self.tuning.strings,
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
@@ -219,8 +235,20 @@ impl FretwiseUi {
             show_pattern: self.show_pattern,
             show_fingering: self.show_fingering,
             settings_open: self.settings_open,
+            amp_open: self.amp_open,
             theme: self.theme,
         }
+    }
+
+    /// The practice amp settings. The host passes them to its effect chain
+    /// every frame with [`fretwise_core::SharedAmp::store`].
+    pub fn amp(&self) -> AmpConfig {
+        self.amp
+    }
+
+    /// The level (dBFS) the host is sending out, for the OUT meter.
+    pub fn set_out_level_db(&mut self, db: f32) {
+        self.out_level_db = db;
     }
 
     /// The input gate the player set, in dBFS. The host passes it to the
@@ -313,6 +341,34 @@ impl FretwiseUi {
             .frame(header)
             .show_separator_line(false)
             .show_inside(ui, |ui| self.header(ui, &reading, host.warning()));
+
+        // Grow or shrink the window when the amp drawer opens/closes so the
+        // main UI above it keeps its room.
+        const AMP_DRAWER_SPACE: f32 = fx_rack::FX_PANE_SPACE;
+        if self.amp_open != self.amp_resized {
+            if let Some(rect) = ui.ctx().input(|i| i.viewport().inner_rect).filter(|r| r.width() >= 400.0 && r.height() >= 300.0) {
+                let min_h = if self.amp_open { 560.0 + AMP_DRAWER_SPACE } else { 560.0 };
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(800.0, min_h)));
+                let delta = if self.amp_open { AMP_DRAWER_SPACE } else { -AMP_DRAWER_SPACE };
+                let new_h = (rect.height() + delta).max(min_h);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(rect.width(), new_h)));
+                self.amp_resized = self.amp_open;
+            }
+        }
+
+        if self.amp_open {
+            let (fill, stroke) = theme::amp_chassis(ui);
+            let amp_frame = egui::Frame::new()
+                .fill(fill)
+                .stroke(stroke)
+                .inner_margin(egui::Margin::symmetric(14, 12))
+                .outer_margin(egui::Margin { top: 10, ..Default::default() })
+                .corner_radius(8);
+            egui::TopBottomPanel::bottom("fretwise_amp_drawer")
+                .frame(amp_frame)
+                .show_separator_line(false)
+                .show_inside(ui, |ui| self.fx_pane(ui));
+        }
 
         egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| match self.tab {
             Tab::Tuner => self.tuner_tab(ui, &reading),

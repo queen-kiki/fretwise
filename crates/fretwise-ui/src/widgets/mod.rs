@@ -1,17 +1,23 @@
 //! Custom-painted widgets, all plain egui: the fretboard with its fret-range
-//! strip, the stepped knob, buttons and pickers, and the meters.
+//! strip, the stepped knob, buttons and pickers, the meters, and the
+//! nameplates and segment read-outs they wear.
 
 mod controls;
 mod fretboard;
 mod knob;
 mod meters;
+mod plate;
 
 use egui::{Color32, Ui};
 
-pub use controls::{dropdown, gear_button, icon_button, plain_button, segmented, skip_button, toggle, Icon};
+pub use controls::{
+    amp_button, dropdown, icon_button, menu_item, plain_button, segmented, skip_button, toggle, wippschalter, Icon,
+};
 pub use fretboard::{fretboard, neck_point, sparkles, Marker, NeckControls};
-pub use knob::knob;
-pub use meters::{flame, level_meter, session_bar, tuner_gauge};
+pub use knob::{knob, stepped_knob};
+pub use meters::{flame, level_meter, output_meter, session_bar, tuner_gauge};
+pub use plate::paint_embossed_plate;
+use plate::{paint_embossed_label, paint_segment_screen};
 
 /// The colour the controls light up in: the theme's selection colour, so
 /// knobs, buttons and the fret range match egui's own widgets.

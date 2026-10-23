@@ -1,7 +1,7 @@
 {
   "id": "open-sevenths",
-  "name": "open 7th chords",
-  "group": "chords",
+  "name": "Open 7th Chords",
+  "group": "Chords",
   "order": 3,
   "chords": [
     "a7-open",

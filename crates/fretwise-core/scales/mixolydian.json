@@ -1,7 +1,7 @@
 {
   "id": "mixolydian",
   "name": "Mixolydian",
-  "group": "modes",
+  "group": "Modes",
   "order": 104,
   "intervals": [0, 2, 4, 5, 7, 9, 10],
   "degrees": ["1", "2", "3", "4", "5", "6", "b7"]

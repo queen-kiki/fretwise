@@ -1,7 +1,7 @@
 {
   "id": "major-pentatonic",
-  "name": "major pentatonic",
-  "group": "basic",
+  "name": "Major Pentatonic",
+  "group": "Basic",
   "order": 3,
   "intervals": [0, 2, 4, 7, 9],
   "degrees": ["1", "2", "3", "5", "6"]

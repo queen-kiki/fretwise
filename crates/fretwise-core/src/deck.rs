@@ -8,8 +8,8 @@
 //! ```json
 //! {
 //!   "id": "beginner-essentials",
-//!   "name": "beginner essentials",
-//!   "group": "collections",
+//!   "name": "Beginner Essentials",
+//!   "group": "Collections",
 //!   "order": 201,
 //!   "decks": ["basic-chords", "pentatonic-blues"]
 //! }

@@ -57,11 +57,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # With native ASIO: the runner ships LLVM for asio-sys's bindgen, and
+      # cpal's build script downloads the Steinberg ASIO SDK.
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: bash
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: |
-          cargo build --release --locked -p fretwise-app
+          cargo build --release --locked -p fretwise-app --features asio
           mkdir dist
           cp target/release/fretwise.exe dist/fretwise-${{ matrix.name }}.exe
 

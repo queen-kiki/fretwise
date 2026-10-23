@@ -1,7 +1,7 @@
 {
   "id": "blues-session",
-  "name": "blues session",
-  "group": "collections",
+  "name": "Blues Session",
+  "group": "Collections",
   "order": 203,
   "scales": [
     "minor-pentatonic",

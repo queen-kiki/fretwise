@@ -1,7 +1,7 @@
 {
   "id": "first-chords",
-  "name": "first chords",
-  "group": "chords",
+  "name": "First Chords",
+  "group": "Chords",
   "order": 1,
   "chords": [
     "em-open",

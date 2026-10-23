@@ -1,7 +1,7 @@
 {
   "id": "rock-metal",
-  "name": "rock & metal",
-  "group": "collections",
+  "name": "Rock & Metal",
+  "group": "Collections",
   "order": 204,
   "decks": [
     "power-chords",

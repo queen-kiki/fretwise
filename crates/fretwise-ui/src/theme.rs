@@ -173,6 +173,15 @@ pub fn rack_fill(ui: &egui::Ui) -> Color32 {
     }
 }
 
+/// Distinct chassis fill and border for the expandable amp drawer below the main UI.
+pub fn amp_chassis(ui: &egui::Ui) -> (Color32, Stroke) {
+    if ui.visuals().dark_mode {
+        (Color32::from_rgb(20, 14, 20), Stroke::new(1.0_f32, Color32::from_rgb(92, 62, 84)))
+    } else {
+        (Color32::from_rgb(240, 214, 226), Stroke::new(1.0_f32, Color32::from_rgb(218, 172, 194)))
+    }
+}
+
 /// Blue → pink → white, the flag read from the edge to the middle; for
 /// gradients that nod to it without shouting.
 pub fn pride_gradient(t: f32) -> Color32 {

@@ -6,7 +6,7 @@
 //! {
 //!   "id": "lydian",
 //!   "name": "Lydian",
-//!   "group": "modes",
+//!   "group": "Modes",
 //!   "order": 103,
 //!   "intervals": [0, 2, 4, 6, 7, 9, 11],
 //!   "degrees": ["1", "2", "3", "#4", "5", "6", "7"]
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn groups_sort_by_their_lowest_order() {
         let groups: Vec<&str> = ScaleKind::groups().map(|(name, _)| name).collect();
-        assert_eq!(groups, ["basic", "modes", "minor", "exotic"]);
+        assert_eq!(groups, ["Basic", "Modes", "Minor", "Exotic"]);
         let basic: Vec<&str> = ScaleKind::groups().next().unwrap().1.map(|k| k.id()).collect();
         assert_eq!(basic[..3], ["chromatic", "major", "natural-minor"]);
         assert_eq!(ScaleKind::all().count(), BUILTIN.len());
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(a_minor_pent.degree(Note(48)), "b3");
         assert_eq!(a_minor_pent.degree(Note(57)), "1");
         assert_eq!(a_minor_pent.degree(Note(47)), "2");
-        assert_eq!(a_minor_pent.name(), "A minor pentatonic");
+        assert_eq!(a_minor_pent.name(), "A Minor Pentatonic");
 
         let c_major = Scale::default();
         assert_eq!(c_major.kind.id(), "major");
@@ -447,7 +447,7 @@ mod tests {
         let f_lydian = Scale { root: 5, kind: kind("lydian") };
         assert_eq!(f_lydian.degree(Note(47)), "#4"); // B2
         assert_eq!(f_lydian.name(), "F Lydian");
-        assert_eq!(Scale { root: 4, kind: kind("chromatic") }.name(), "chromatic");
+        assert_eq!(Scale { root: 4, kind: kind("chromatic") }.name(), "Chromatic");
     }
 
     #[test]

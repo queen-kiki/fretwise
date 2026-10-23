@@ -1,7 +1,7 @@
 {
   "id": "barre-chords",
-  "name": "barre chords",
-  "group": "chords",
+  "name": "Barre Chords",
+  "group": "Chords",
   "order": 8,
   "decks": [
     "barre-e-shapes",

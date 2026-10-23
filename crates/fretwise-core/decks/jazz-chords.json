@@ -1,7 +1,7 @@
 {
   "id": "jazz-chords",
-  "name": "jazz chords",
-  "group": "chords",
+  "name": "Jazz Chords",
+  "group": "Chords",
   "order": 9,
   "chords": [
     "gmaj7-jazz",

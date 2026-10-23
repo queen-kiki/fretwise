@@ -1,7 +1,7 @@
 {
   "id": "dorian",
   "name": "Dorian",
-  "group": "modes",
+  "group": "Modes",
   "order": 101,
   "intervals": [0, 2, 3, 5, 7, 9, 10],
   "degrees": ["1", "2", "b3", "4", "5", "6", "b7"]

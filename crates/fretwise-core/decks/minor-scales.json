@@ -1,7 +1,7 @@
 {
   "id": "minor-scales",
-  "name": "minor family",
-  "group": "scales",
+  "name": "Minor Family",
+  "group": "Scales",
   "order": 103,
   "scales": [
     "natural-minor",

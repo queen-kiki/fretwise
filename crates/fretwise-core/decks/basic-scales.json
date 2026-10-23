@@ -1,7 +1,7 @@
 {
   "id": "basic-scales",
-  "name": "basic scales",
-  "group": "scales",
+  "name": "Basic Scales",
+  "group": "Scales",
   "order": 102,
   "scales": [
     "major",

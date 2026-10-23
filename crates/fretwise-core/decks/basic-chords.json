@@ -1,7 +1,7 @@
 {
   "id": "basic-chords",
-  "name": "basic chords",
-  "group": "chords",
+  "name": "Basic Chords",
+  "group": "Chords",
   "order": 2,
   "chords": [
     "em-open",

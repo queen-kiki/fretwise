@@ -1,7 +1,7 @@
 {
   "id": "diatonic-modes",
-  "name": "diatonic modes",
-  "group": "scales",
+  "name": "Diatonic Modes",
+  "group": "Scales",
   "order": 104,
   "scales": [
     "ionian",

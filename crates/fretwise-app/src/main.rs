@@ -174,6 +174,8 @@ impl fretwise_ui::Host for AudioSetup {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.audio.engine.shared.set_gate_db(self.ui.gate_db());
+        self.audio.engine.amp.store(self.ui.amp());
+        self.ui.set_out_level_db(self.audio.engine.amp.out_level_db());
         let reading = self.audio.engine.shared.load();
         let frame = egui::Frame::central_panel(&ctx.style()).inner_margin(14);
         egui::CentralPanel::default()

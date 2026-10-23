@@ -12,6 +12,7 @@ pub mod chord;
 pub mod deck;
 pub mod fft;
 pub mod fingering;
+pub mod fx;
 pub mod learn;
 pub mod pitch;
 pub mod poly;
@@ -31,6 +32,10 @@ pub use chord::{
 };
 pub use deck::{DeckDef, DeckKind};
 pub use fingering::fingering;
+pub use fx::{
+    AmpConfig, Cabinet, CleanAmp, Effect, EffectChain, SampleRing, SharedAmp, AMP_GAIN_RANGE_DB, AMP_LEVEL_RANGE_DB,
+    AMP_TONE_RANGE, CAB_MIC_RANGE, OUT_GAIN_RANGE_DB,
+};
 pub use learn::{ActiveCard, GuideMode, LearnCard, LearnConfig, LearnFeedback, LearnProgress, LearnTrainer};
 pub use pitch::{PitchEstimate, Yin};
 pub use scale::{Scale, ScaleKind};

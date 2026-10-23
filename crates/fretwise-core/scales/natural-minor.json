@@ -1,7 +1,7 @@
 {
   "id": "natural-minor",
-  "name": "minor",
-  "group": "basic",
+  "name": "Minor",
+  "group": "Basic",
   "order": 2,
   "intervals": [0, 2, 3, 5, 7, 8, 10],
   "degrees": ["1", "2", "b3", "4", "5", "b6", "b7"]

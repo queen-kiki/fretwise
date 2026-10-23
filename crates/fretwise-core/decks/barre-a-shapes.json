@@ -1,7 +1,7 @@
 {
   "id": "barre-a-shapes",
-  "name": "A-shape barre chords",
-  "group": "chords",
+  "name": "A-Shape Barre Chords",
+  "group": "Chords",
   "order": 7,
   "chords": [
     "bm-barre",

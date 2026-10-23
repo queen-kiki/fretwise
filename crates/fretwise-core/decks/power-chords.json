@@ -1,7 +1,7 @@
 {
   "id": "power-chords",
-  "name": "power chords",
-  "group": "chords",
+  "name": "Power Chords",
+  "group": "Chords",
   "order": 5,
   "chords": [
     "e5-power",

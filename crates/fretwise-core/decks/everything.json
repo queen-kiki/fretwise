@@ -1,7 +1,7 @@
 {
   "id": "everything",
-  "name": "everything",
-  "group": "collections",
+  "name": "Everything",
+  "group": "Collections",
   "order": 299,
   "decks": [
     "basic-chords",

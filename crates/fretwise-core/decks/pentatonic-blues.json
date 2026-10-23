@@ -1,7 +1,7 @@
 {
   "id": "pentatonic-blues",
-  "name": "pentatonic & blues",
-  "group": "scales",
+  "name": "Pentatonic & Blues",
+  "group": "Scales",
   "order": 101,
   "scales": [
     "minor-pentatonic",
