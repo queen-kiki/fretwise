@@ -33,7 +33,7 @@ pub struct EffectChain {
     sample_rate: f32,
     effects: Vec<Box<dyn Effect>>,
     scratch: Vec<f32>,
-    resampler: LinearResampler,
+    reader: RingReader,
 }
 
 impl EffectChain {
@@ -43,7 +43,7 @@ impl EffectChain {
             sample_rate,
             effects: Vec::new(),
             scratch: Vec::with_capacity(max_block_size),
-            resampler: LinearResampler::default(),
+            reader: RingReader::default(),
         }
     }
 
@@ -76,12 +76,13 @@ impl EffectChain {
         }
     }
 
-    /// Pull `frames` mono samples from `ring`, run them through the effect chain,
-    /// and call `emit(i, sample)` for each processed sample.
+    /// Pull `total_frames` mono samples from `ring`, run them through the
+    /// effect chain, and call `emit(i, sample)` for each processed sample.
     ///
-    /// The input may run at a different rate from the chain (another device,
-    /// or the same one set differently), so samples are resampled from the
-    /// ring's [`SampleRing::sample_rate`] to the chain's.
+    /// The input runs on its own clock, often at another rate (another
+    /// device, or ASIO at 44.1 kHz into a 48 kHz output), so a [`RingReader`]
+    /// resamples from the ring's [`SampleRing::sample_rate`] to the chain's
+    /// and keeps a jitter cushion between the two callbacks.
     ///
     /// Uses pre-allocated scratch storage up to `scratch.capacity()` chunks so
     /// the audio callback never allocates even if the host requests a large buffer.
@@ -90,16 +91,14 @@ impl EffectChain {
         F: FnMut(usize, f32),
     {
         let cap = self.scratch.capacity().max(64);
-        let step = match ring.sample_rate() {
-            0 => 1.0,
-            rate => rate as f32 / self.sample_rate,
-        };
+        let step = self.reader.plan(ring, total_frames, self.sample_rate);
         let mut offset = 0;
         while offset < total_frames {
             let chunk = (total_frames - offset).min(cap);
             self.scratch.clear();
-            for _ in 0..chunk {
-                self.scratch.push(self.resampler.next(ring, step));
+            match step {
+                Some(step) => self.scratch.extend((0..chunk).map(|_| self.reader.resampler.next(ring, step))),
+                None => self.scratch.resize(chunk, 0.0),
             }
             for effect in &mut self.effects {
                 effect.process(&mut self.scratch);
@@ -109,6 +108,82 @@ impl EffectChain {
             }
             offset += chunk;
         }
+    }
+}
+
+/// The output side of a [`SampleRing`]: keeps just enough input queued to
+/// ride out how the two callbacks actually line up, and no more.
+///
+/// - It watches the headroom each output block starts with (queued input
+///   beyond what the block reads) and steers its low point to a small jitter
+///   margin. Two callbacks driven by one clock (ASIO, or one interface's
+///   WASAPI in and out) settle near the margin alone; independent ones keep
+///   whatever extra their phase drift and block sizes need.
+/// - It steers by nudging the resampling rate (by up to 1%, and far less
+///   once settled), which also absorbs clock drift, rather than skipping.
+/// - Starting up, or after running dry, it plays silence until the cushion
+///   has built up again, rather than reading the ring empty mid-block, which
+///   tears holes in the waveform.
+/// - The margin starts at 2 ms and grows whenever a block starts nearly
+///   drained (or runs dry), so a busy machine settles at what it needs.
+#[derive(Default)]
+struct RingReader {
+    resampler: LinearResampler,
+    playing: bool,
+    /// The lowest recent headroom (input samples): drops at once, recovers slowly.
+    low: f32,
+    /// Extra queue for scheduling jitter, in seconds; 0 until first planned.
+    margin: f32,
+    /// Blocks to wait after growing the margin, while the queue fills to match.
+    cooldown: u32,
+}
+
+impl RingReader {
+    /// The resampling step for the next `frames` output samples, or `None`
+    /// to play silence while the cushion builds.
+    fn plan(&mut self, ring: &SampleRing, frames: usize, out_rate: f32) -> Option<f32> {
+        let in_rate = match ring.sample_rate() {
+            0 => return None,
+            rate => rate as f32,
+        };
+        let base = in_rate / out_rate;
+        if self.margin == 0.0 {
+            self.margin = 0.002;
+        }
+        let margin = self.margin * in_rate;
+        let avail = ring.available() as f32;
+        // What this block reads, at the fastest the steering may run.
+        let needed = frames as f32 * base * 1.01 + 2.0;
+
+        if !self.playing {
+            // Start with room for one input block of swing; steering trims
+            // whatever turns out not to be needed.
+            if avail < needed + ring.block() as f32 + margin {
+                return None;
+            }
+            self.playing = true;
+            self.low = avail - needed;
+            self.resampler = LinearResampler::default();
+        } else if avail < needed {
+            // Ran dry: drop out cleanly and rebuild a larger cushion.
+            self.playing = false;
+            self.margin = (self.margin * 1.5).min(0.05);
+            return None;
+        }
+        let headroom = avail - needed;
+        self.cooldown = self.cooldown.saturating_sub(1);
+        if self.cooldown == 0 && headroom < margin * 0.5 {
+            // A near miss: grow the margin before it becomes a dropout.
+            self.margin = (self.margin * 1.25).min(0.05);
+            self.cooldown = 20;
+        }
+        // Track the low point: fall straight to a new minimum, rise over ~2 s
+        // so one early block doesn't hold the latency up forever.
+        let release = frames as f32 / out_rate / 2.0;
+        self.low = headroom.min(self.low + (headroom - self.low) * release);
+        // Correct the excess over about half a second, by up to 1%.
+        let excess = self.low - self.margin * in_rate;
+        Some(base * (1.0 + (excess / (in_rate * 0.5)).clamp(-0.01, 0.01)))
     }
 }
 
@@ -139,19 +214,18 @@ impl LinearResampler {
 }
 
 /// Lock-free single-producer, single-consumer (SPSC) ring buffer for bridging
-/// the input stream callback to the output stream callback.
-///
-/// Bounded to a small latency window: if the input callback runs ahead of the
-/// output callback (e.g. while output is starting up or due to clock drift),
-/// older samples are dropped so monitoring latency never builds up.
+/// the input stream callback to the output stream callback. How much to keep
+/// queued is up to the reader (see [`RingReader`]); a full ring drops new
+/// samples.
 pub struct SampleRing {
     buffer: Box<[UnsafeCell<f32>]>,
     mask: usize,
-    max_latency: usize,
     write_idx: AtomicUsize,
     read_idx: AtomicUsize,
     /// The producer's sample rate in Hz, or 0 while there is none.
     sample_rate: AtomicU32,
+    /// The producer's callback block size in samples, for sizing the cushion.
+    block: AtomicUsize,
 }
 
 // SAFETY: `SampleRing` is a lock-free SPSC queue where only the producer writes
@@ -161,9 +235,8 @@ unsafe impl Sync for SampleRing {}
 unsafe impl Send for SampleRing {}
 
 impl SampleRing {
-    /// Create a ring buffer with `capacity` (rounded up to a power of two) and
-    /// a maximum queued latency of `max_latency` samples before old samples are skipped.
-    pub fn new(capacity: usize, max_latency: usize) -> Self {
+    /// Create a ring buffer holding `capacity` samples (rounded up to a power of two).
+    pub fn new(capacity: usize) -> Self {
         let cap = capacity.max(64).next_power_of_two();
         let buffer = (0..cap)
             .map(|_| UnsafeCell::new(0.0))
@@ -172,10 +245,10 @@ impl SampleRing {
         Self {
             buffer,
             mask: cap - 1,
-            max_latency: max_latency.clamp(32, cap - 1),
             write_idx: AtomicUsize::new(0),
             read_idx: AtomicUsize::new(0),
             sample_rate: AtomicU32::new(0),
+            block: AtomicUsize::new(0),
         }
     }
 
@@ -198,29 +271,46 @@ impl SampleRing {
     #[inline]
     pub fn pop(&self) -> f32 {
         let w = self.write_idx.load(Ordering::Acquire);
-        let mut r = self.read_idx.load(Ordering::Relaxed);
-        let avail = w.wrapping_sub(r);
-        if avail == 0 {
+        let r = self.read_idx.load(Ordering::Relaxed);
+        if w == r {
             return 0.0;
-        }
-        // If too much audio queued up (e.g. output started after input), jump
-        // forward to keep live monitoring latency tight.
-        if avail > self.max_latency {
-            r = w.wrapping_sub(self.max_latency / 2);
         }
         let sample = unsafe { *self.buffer[r & self.mask].get() };
         self.read_idx.store(r.wrapping_add(1), Ordering::Release);
         sample
     }
 
+    /// Samples queued for the consumer.
+    pub fn available(&self) -> usize {
+        let w = self.write_idx.load(Ordering::Acquire);
+        w.wrapping_sub(self.read_idx.load(Ordering::Relaxed))
+    }
+
+    /// Drop up to `n` of the oldest queued samples (consumer side).
+    pub fn skip(&self, n: usize) {
+        let r = self.read_idx.load(Ordering::Relaxed);
+        self.read_idx.store(r.wrapping_add(n.min(self.available())), Ordering::Release);
+    }
+
     /// Record the rate the producer pushes at, so the consumer can resample.
     pub fn set_sample_rate(&self, hz: u32) {
         self.sample_rate.store(hz, Ordering::Relaxed);
+        self.block.store(0, Ordering::Relaxed);
     }
 
     /// The producer's sample rate in Hz, or 0 if none was set.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate.load(Ordering::Relaxed)
+    }
+
+    /// Record a producer callback's block size; the ring keeps the largest seen.
+    pub fn note_block(&self, samples: usize) {
+        self.block.fetch_max(samples, Ordering::Relaxed);
+    }
+
+    /// The largest producer block seen since the rate was set.
+    pub fn block(&self) -> usize {
+        self.block.load(Ordering::Relaxed)
     }
 
     /// Discard all queued samples.
@@ -674,42 +764,135 @@ mod tests {
     }
 
     #[test]
-    fn sample_ring_bounds_latency_and_handles_underrun() {
-        let ring = SampleRing::new(128, 32);
+    fn sample_ring_queues_and_handles_underrun() {
+        let ring = SampleRing::new(128);
         assert_eq!(ring.pop(), 0.0);
         for i in 1..=64 {
             ring.push(i as f32);
         }
-        // Because 64 > max_latency (32), pop jumps forward to keep latency tight.
-        let first = ring.pop();
-        assert!(first > 30.0, "expected old samples to be skipped, got {first}");
+        assert_eq!(ring.available(), 64);
+        ring.skip(10);
+        assert_eq!(ring.pop(), 11.0);
+        // Full: one slot stays open, the rest are dropped.
+        for i in 0..200 {
+            ring.push(i as f32);
+        }
+        assert_eq!(ring.available(), 127);
     }
 
     #[test]
     fn chain_resamples_from_the_ring_rate() {
         // A 24 kHz ramp read by a 48 kHz chain: twice the samples, halfway
-        // points interpolated, so a 1 kHz tone keeps its pitch.
-        let ring = SampleRing::new(256, 200);
+        // points interpolated, so a 1 kHz tone keeps its pitch. (Steps can
+        // stray up to 1% while the reader steers its queue.)
+        let ring = SampleRing::new(1024);
         ring.set_sample_rate(24_000);
-        for i in 0..64 {
+        for i in 0..512 {
             ring.push(i as f32);
         }
         let mut chain = EffectChain::new(48_000.0, 128);
         let mut out = Vec::new();
         chain.process_from_ring(&ring, 40, |_, s| out.push(s));
         // The first few interpolate from the silence before the ramp's 0.
-        let ramp: Vec<f32> = out[4..].windows(2).map(|w| w[1] - w[0]).collect();
-        assert!(ramp.iter().all(|&d| (d - 0.5).abs() < 1e-6), "{out:?}");
+        assert!(out[4..].windows(2).all(|w| (w[1] - w[0] - 0.5).abs() < 0.01), "{out:?}");
 
         // Same rates pass straight through.
         ring.set_sample_rate(48_000);
         ring.clear();
-        for i in 0..8 {
+        for i in 0..512 {
             ring.push(i as f32);
         }
         let mut out = Vec::new();
-        chain.process_from_ring(&ring, 6, |_, s| out.push(s));
-        assert!(out[2..].windows(2).all(|w| w[1] - w[0] == 1.0), "{out:?}");
+        chain.process_from_ring(&ring, 40, |_, s| out.push(s));
+        assert!(out[4..].windows(2).all(|w| (w[1] - w[0] - 1.0).abs() < 0.02), "{out:?}");
+    }
+
+    /// Input and output callbacks on their own clocks, with up to 3 ms of
+    /// scheduling jitter each, the way two WASAPI (or ASIO + WASAPI) streams
+    /// run; `drift_ppm` makes the input clock run that much fast. Feeds a
+    /// counting ramp, so every dropped, repeated or zeroed sample shows up as
+    /// a step unlike the rest. Returns the glitch events after the first second.
+    fn simulate_streams(input: (u32, usize), output: (u32, usize), drift_ppm: f64, seconds: i64) -> usize {
+        let ((in_rate, in_block), (out_rate, out_block)) = (input, output);
+        let ring = SampleRing::new(8192);
+        ring.set_sample_rate(in_rate);
+        let mut chain = EffectChain::new(out_rate as f32, 512);
+        let mut rng = 0x2545_f491_u32;
+        let mut jitter = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 17;
+            rng ^= rng << 5;
+            (rng % 3000) as f64
+        };
+        let in_period = in_block as f64 * 1e6 / (in_rate as f64 * (1.0 + drift_ppm * 1e-6));
+        let out_period = out_block as f64 * 1e6 / out_rate as f64;
+        let (mut n_in, mut n_out, mut pushed) = (0.0, 0.0, 0);
+        let (mut next_in, mut next_out) = (jitter(), 4_000.0 + jitter());
+        let mut out = Vec::new();
+        let end = seconds as f64 * 1e6;
+        while next_in < end || next_out < end {
+            if next_in <= next_out {
+                for _ in 0..in_block {
+                    pushed += 1;
+                    // A triangle rather than an endless ramp, so f32 keeps
+                    // sub-sample precision.
+                    let t = pushed % 8192;
+                    ring.push(t.min(8192 - t) as f32);
+                }
+                ring.note_block(in_block);
+                n_in += 1.0;
+                next_in = n_in * in_period + jitter();
+            } else {
+                chain.process_from_ring(&ring, out_block, |_, s| out.push(s));
+                n_out += 1.0;
+                next_out = 4_000.0 + n_out * out_period + jitter();
+            }
+        }
+        // Count glitch events (runs of bad steps), after the first second.
+        let step = in_rate as f32 / out_rate as f32;
+        let bad: Vec<bool> = out[out_rate as usize..]
+            .windows(2)
+            .map(|w| w.iter().any(|v| (4.0..4092.0).contains(v)) && ((w[1] - w[0]).abs() - step).abs() > 0.05)
+            .collect();
+        bad.windows(2).filter(|w| w[1] && !w[0]).count()
+    }
+
+    #[test]
+    fn monitoring_survives_callback_jitter() {
+        let cases = [
+            ("same blocks", (48_000, 480), (48_000, 480), 0.0),
+            ("mismatched blocks", (48_000, 512), (48_000, 441), 0.0),
+            ("44.1k input into 48k output", (44_100, 512), (48_000, 480), 0.0),
+            ("input clock fast", (48_000, 480), (48_000, 480), 300.0),
+            ("input clock slow", (48_000, 256), (48_000, 480), -300.0),
+        ];
+        for (name, input, output, drift) in cases {
+            let glitches = simulate_streams(input, output, drift, 20);
+            assert_eq!(glitches, 0, "{name}: {glitches} glitches in 20 s");
+        }
+    }
+
+    #[test]
+    fn locked_callbacks_add_little_latency() {
+        // One ASIO driver tick: the input block arrives, then the output
+        // block is read, every time. The queue should settle at the margin.
+        let ring = SampleRing::new(8192);
+        ring.set_sample_rate(48_000);
+        let mut chain = EffectChain::new(48_000.0, 512);
+        let mut queued = Vec::new();
+        for n in 0..(48_000 * 10 / 128) {
+            for i in 0..128 {
+                ring.push(((n * 128 + i) % 1000) as f32);
+            }
+            ring.note_block(128);
+            queued.push(ring.available());
+            chain.process_from_ring(&ring, 128, |_, _| {});
+        }
+        // Queue beyond the block being read, over the last 5 s, in ms.
+        let tail = &queued[queued.len() / 2..];
+        let extra = tail.iter().map(|&q| q as f32 - 128.0).sum::<f32>() / tail.len() as f32 / 48.0;
+        assert!(extra < 3.5, "{extra:.2} ms of extra latency");
+        assert!(tail.iter().all(|&q| q >= 128), "ran dry");
     }
 
     #[test]

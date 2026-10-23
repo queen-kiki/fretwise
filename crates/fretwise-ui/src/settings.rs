@@ -13,7 +13,7 @@ impl FretwiseUi {
     pub(crate) fn settings_panel(&mut self, ui: &mut egui::Ui, now: f64, host: &mut dyn Host) {
         ui.label(RichText::new("Settings").size(18.0).strong());
         egui::ScrollArea::vertical().max_height(ui.ctx().screen_rect().height() - 130.0).show(ui, |ui| {
-            section(ui, "Audio input");
+            section(ui, "Audio");
             host.audio_settings(ui);
             ui.add_space(6.0);
             ui.horizontal(|ui| {

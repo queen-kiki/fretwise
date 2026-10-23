@@ -16,6 +16,11 @@ struct AudioSetup {
     device: Option<String>,
     devices: Vec<String>,
     channel: usize,
+    /// Output device; `None` is the driver's default.
+    output: Option<String>,
+    outputs: Vec<String>,
+    /// 0-based output channel pair: 0 is channels 1-2.
+    output_pair: usize,
     channel_count: u16,
     error: Option<String>,
     output_error: Option<String>,
@@ -39,9 +44,9 @@ impl App {
         // Keep the saved device even if it's unplugged right now: it shows as
         // "device not found" until it's back and ⟳ is pressed, rather than
         // being forgotten in favour of the default.
-        let (device, channel) = match (saved_host, audio.device) {
-            (Some(_), Some(d)) => (Some(d), audio.channel),
-            _ => (AudioEngine::default_input(host), 0),
+        let (device, channel, output, output_pair) = match (saved_host, audio.device) {
+            (Some(_), Some(d)) => (Some(d), audio.channel, audio.output, audio.output_pair),
+            _ => (AudioEngine::default_input(host), 0, None, 0),
         };
         let mut audio = AudioSetup {
             engine: AudioEngine::new(),
@@ -49,6 +54,9 @@ impl App {
             device,
             devices: AudioEngine::input_devices(host),
             channel,
+            output,
+            outputs: AudioEngine::output_devices(host),
+            output_pair,
             channel_count: 0,
             error: None,
             output_error: None,
@@ -68,6 +76,8 @@ impl App {
                 host: Some(self.audio.host.name().to_string()),
                 device: self.audio.device.clone(),
                 channel: self.audio.channel,
+                output: self.audio.output.clone(),
+                output_pair: self.audio.output_pair,
             },
             ui: self.ui.state(),
             ..Default::default()
@@ -77,22 +87,55 @@ impl App {
 }
 
 impl AudioSetup {
+    /// ASIO loads one driver at a time, so there the output is the input
+    /// device itself (its "default" would be whichever driver is listed first).
+    fn shares_device(&self) -> bool {
+        audio::is_asio(self.host)
+    }
+
+    /// The output to open: the chosen one, the driver's default, or under
+    /// ASIO the input device.
+    fn output_device(&self) -> Option<&str> {
+        if self.shares_device() {
+            self.device.as_deref()
+        } else {
+            self.output.as_deref()
+        }
+    }
+
     fn restart(&mut self) {
         self.error = None;
-        // Chimes go to the driver's default output, whatever the input is.
-        self.output_error = self.engine.start_output(self.host).err();
-        let Some(device) = self.device.clone() else {
-            self.engine.stop_input();
-            self.error = Some("no input device".into());
-            return;
-        };
-        self.channel_count = AudioEngine::channel_count(self.host, &device);
-        if self.channel_count > 0 {
-            self.channel = self.channel.min(self.channel_count as usize - 1);
+        if self.shares_device() {
+            // Both streams come from one driver session: close it entirely
+            // and open input and output on it afresh.
+            self.engine.stop();
         }
-        if let Err(e) = self.engine.start(self.host, &device, self.channel) {
-            self.error = Some(e);
+        let output = self.output_device().map(str::to_owned);
+        self.output_error = self.engine.start_output(self.host, output.as_deref(), self.output_pair).err();
+        let pairs = self.engine.output_channels.div_ceil(2) as usize;
+        if pairs > 0 {
+            self.output_pair = self.output_pair.min(pairs - 1);
         }
+        match self.device.clone() {
+            Some(device) => {
+                if let Err(e) = self.engine.start(self.host, &device, self.channel) {
+                    self.error = Some(e);
+                }
+                // From the open stream, not a second lookup: under ASIO that
+                // would be another handle on the driver.
+                self.channel_count = self.engine.info.as_ref().map_or(0, |i| i.channels);
+                if self.channel_count > 0 {
+                    self.channel = self.channel.min(self.channel_count as usize - 1);
+                }
+            }
+            None => {
+                self.engine.stop_input();
+                self.error = Some("no input device".into());
+            }
+        }
+        let (output_error, input_error) = self.engine.play();
+        self.output_error = self.output_error.take().or(output_error);
+        self.error = self.error.take().or(input_error);
     }
 }
 
@@ -116,13 +159,16 @@ impl fretwise_ui::Host for AudioSetup {
                             self.devices = AudioEngine::input_devices(h);
                             self.device = AudioEngine::default_input(h).or_else(|| self.devices.first().cloned());
                             self.channel = 0;
+                            self.outputs = AudioEngine::output_devices(h);
+                            self.output = None;
+                            self.output_pair = 0;
                             changed = true;
                         }
                     }
                 });
             ui.end_row();
 
-            ui.label("Device");
+            ui.label("Input");
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("input")
                     .selected_text(self.device.as_deref().unwrap_or("none"))
@@ -138,16 +184,58 @@ impl fretwise_ui::Host for AudioSetup {
                     });
                 if ui.button("⟳").on_hover_text("Rescan devices").clicked() {
                     self.devices = AudioEngine::input_devices(self.host);
+                    self.outputs = AudioEngine::output_devices(self.host);
                     changed = true;
                 }
             });
             ui.end_row();
 
             // Input jacks as buttons, the way they're numbered on the box.
-            ui.label("Input");
+            ui.label("Channel");
             ui.horizontal_wrapped(|ui| {
                 for c in 0..self.channel_count.max(1) as usize {
                     changed |= ui.selectable_value(&mut self.channel, c, format!(" {} ", c + 1)).changed();
+                }
+            });
+            ui.end_row();
+
+            ui.label("Output");
+            let shared = self.shares_device();
+            let shown = self.output_device().unwrap_or("System default").to_owned();
+            let picker = ui.add_enabled_ui(!shared, |ui| {
+                egui::ComboBox::from_id_salt("output")
+                    .selected_text(shown)
+                    .width(140.0)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        let before = self.output.clone();
+                        ui.selectable_value(&mut self.output, None, "System default");
+                        for d in &self.outputs {
+                            ui.selectable_value(&mut self.output, Some(d.clone()), d);
+                        }
+                        if self.output != before {
+                            self.output_pair = 0;
+                            changed = true;
+                        }
+                    });
+            });
+            if shared {
+                picker.response.on_disabled_hover_text("ASIO runs one driver at a time: sound goes out the input's device");
+            }
+            ui.end_row();
+
+            // Output jacks in stereo pairs, as the box labels them; a lone
+            // last channel gets its own button.
+            ui.label("Channel");
+            ui.horizontal_wrapped(|ui| {
+                let channels = self.engine.output_channels.max(2) as usize;
+                for p in 0..channels.div_ceil(2) {
+                    let label = if p * 2 + 1 < channels {
+                        format!(" {}-{} ", p * 2 + 1, p * 2 + 2)
+                    } else {
+                        format!(" {} ", p * 2 + 1)
+                    };
+                    changed |= ui.selectable_value(&mut self.output_pair, p, label).changed();
                 }
             });
             ui.end_row();

@@ -22,6 +22,13 @@ pub struct AudioEngine {
     stream: Option<cpal::Stream>,
     pub info: Option<StreamInfo>,
     output: Option<cpal::Stream>,
+    /// Channels on the open output, for the channel-pair picker.
+    pub output_channels: u16,
+    /// Under ASIO, the one device both streams open. cpal keeps a driver's
+    /// buffers per `Device` value and sets them up for input and output
+    /// together; streams opened from two lookups of the same driver each
+    /// recreate the buffers, and the first one goes silent.
+    asio_device: Option<cpal::Device>,
     /// Bumped by [`AudioEngine::chime`]; the output callback plays one chime
     /// per increment it sees.
     chimes: Arc<AtomicU32>,
@@ -32,12 +39,14 @@ impl AudioEngine {
         Self {
             shared: Arc::new(SharedPitch::default()),
             amp: Arc::new(SharedAmp::default()),
-            // 4096-sample ring with a ~16 ms (768-sample @ 48 kHz) ceiling so
-            // live guitar monitoring stays tight even if input starts first.
-            ring: Arc::new(SampleRing::new(4096, 768)),
+            // Room for ~85 ms at 96 kHz; the output side keeps only a small
+            // cushion of it queued (see `EffectChain::process_from_ring`).
+            ring: Arc::new(SampleRing::new(8192)),
             stream: None,
             info: None,
             output: None,
+            output_channels: 0,
+            asio_device: None,
             chimes: Arc::new(AtomicU32::new(0)),
         }
     }
@@ -54,20 +63,22 @@ impl AudioEngine {
             .unwrap_or_default()
     }
 
-    pub fn default_input(host: HostId) -> Option<String> {
-        cpal::host_from_id(host).ok()?.default_input_device()?.name().ok()
+    pub fn output_devices(host: HostId) -> Vec<String> {
+        cpal::host_from_id(host)
+            .ok()
+            .and_then(|h| h.output_devices().ok())
+            .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
     }
 
-    /// Input channel count of a device, for the channel picker.
-    pub fn channel_count(host: HostId, device: &str) -> u16 {
-        find_device(host, device)
-            .and_then(|d| d.default_input_config().ok())
-            .map_or(0, |c| c.channels())
+    pub fn default_input(host: HostId) -> Option<String> {
+        cpal::host_from_id(host).ok()?.default_input_device()?.name().ok()
     }
 
     pub fn stop(&mut self) {
         self.stop_input();
         self.output = None;
+        self.asio_device = None;
     }
 
     pub fn stop_input(&mut self) {
@@ -81,40 +92,54 @@ impl AudioEngine {
         self.chimes.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Open the host's default output for the effect chain and chimes.
-    pub fn start_output(&mut self, host: HostId) -> Result<(), String> {
+    /// Open `device` (or the host's default) for the effect chain and chimes,
+    /// playing on its channels `pair * 2` and the one after (clamped to the
+    /// device; other channels stay silent). Call [`AudioEngine::play`] once
+    /// the input is open too.
+    pub fn start_output(&mut self, host: HostId, device: Option<&str>, pair: usize) -> Result<(), String> {
         self.output = None;
-        let dev = cpal::host_from_id(host)
-            .map_err(|e| e.to_string())?
-            .default_output_device()
-            .ok_or("no output device")?;
+        self.output_channels = 0;
+        let dev = match device {
+            Some(name) => self.open(host, name, true).ok_or_else(|| format!("output not found: {name}"))?,
+            None => cpal::host_from_id(host)
+                .map_err(|e| e.to_string())?
+                .default_output_device()
+                .ok_or("no output device")?,
+        };
         let supported = dev.default_output_config().map_err(|e| e.to_string())?;
         let config: StreamConfig = supported.config();
         let sr = config.sample_rate.0 as f32;
-        let chime = Chime::new(sr);
         let mut chain = EffectChain::new(sr, 512);
         chain.push(Box::new(CleanAmp::new(sr, self.amp.clone())));
         chain.push(Box::new(Cabinet::new(sr, self.amp.clone())));
-        let ring = self.ring.clone();
-        let amp = self.amp.clone();
+        let channels = config.channels.max(1) as usize;
+        let parts = OutputParts {
+            chime: Chime::new(sr),
+            chimes: self.chimes.clone(),
+            chain,
+            ring: self.ring.clone(),
+            amp: self.amp.clone(),
+            first: (pair * 2).min(channels - 1),
+        };
 
         let stream = match supported.sample_format() {
-            SampleFormat::F32 => build_output::<f32>(&dev, &config, chime, self.chimes.clone(), chain, ring, amp),
-            SampleFormat::I32 => build_output::<i32>(&dev, &config, chime, self.chimes.clone(), chain, ring, amp),
-            SampleFormat::I16 => build_output::<i16>(&dev, &config, chime, self.chimes.clone(), chain, ring, amp),
-            SampleFormat::U16 => build_output::<u16>(&dev, &config, chime, self.chimes.clone(), chain, ring, amp),
+            SampleFormat::F32 => build_output::<f32>(&dev, &config, parts),
+            SampleFormat::I32 => build_output::<i32>(&dev, &config, parts),
+            SampleFormat::I16 => build_output::<i16>(&dev, &config, parts),
+            SampleFormat::U16 => build_output::<u16>(&dev, &config, parts),
             other => return Err(format!("unsupported output format {other:?}")),
         }
         .map_err(|e| e.to_string())?;
-        stream.play().map_err(|e| e.to_string())?;
         self.output = Some(stream);
+        self.output_channels = config.channels;
         Ok(())
     }
 
-    /// Open `device` and analyze one of its input channels (0-based).
+    /// Open `device` to analyze one of its input channels (0-based). Call
+    /// [`AudioEngine::play`] to start it.
     pub fn start(&mut self, host: HostId, device: &str, channel: usize) -> Result<(), String> {
         self.stop_input();
-        let dev = find_device(host, device).ok_or_else(|| format!("device not found: {device}"))?;
+        let dev = self.open(host, device, false).ok_or_else(|| format!("device not found: {device}"))?;
         let supported = dev.default_input_config().map_err(|e| e.to_string())?;
         let config: StreamConfig = supported.config();
         let channel = channel.min(config.channels.saturating_sub(1) as usize);
@@ -131,7 +156,6 @@ impl AudioEngine {
             other => return Err(format!("unsupported sample format {other:?}")),
         }
         .map_err(|e| e.to_string())?;
-        stream.play().map_err(|e| e.to_string())?;
 
         self.info = Some(StreamInfo {
             sample_rate: config.sample_rate.0,
@@ -141,6 +165,49 @@ impl AudioEngine {
         self.stream = Some(stream);
         Ok(())
     }
+}
+
+impl AudioEngine {
+    /// Start whichever streams are open: output, then input. Errors are
+    /// (output, input).
+    ///
+    /// Both must be built first: under ASIO, opening the second stream sets
+    /// the driver's buffers up again for both, which drivers only allow while
+    /// stopped.
+    pub fn play(&self) -> (Option<String>, Option<String>) {
+        let play = |s: &Option<cpal::Stream>| s.as_ref().and_then(|s| s.play().err()).map(|e| e.to_string());
+        (play(&self.output), play(&self.stream))
+    }
+
+    /// The device called `name`, as an output or an input. Under ASIO it's
+    /// the same `Device` value for both (see `asio_device`).
+    fn open(&mut self, host: HostId, name: &str, output: bool) -> Option<cpal::Device> {
+        let lookup = if output { find_output_device } else { find_device };
+        if !is_asio(host) {
+            return lookup(host, name);
+        }
+        if let Some(dev) = &self.asio_device {
+            if dev.name().is_ok_and(|n| n == name) {
+                return Some(dev.clone());
+            }
+        }
+        let dev = lookup(host, name)?;
+        self.asio_device = Some(dev.clone());
+        Some(dev)
+    }
+}
+
+/// ASIO loads one driver at a time, and its input and output share it.
+pub fn is_asio(host: HostId) -> bool {
+    host.name() == "ASIO"
+}
+
+fn find_output_device(host: HostId, name: &str) -> Option<cpal::Device> {
+    cpal::host_from_id(host)
+        .ok()?
+        .output_devices()
+        .ok()?
+        .find(|d| d.name().map(|n| n == name).unwrap_or(false))
 }
 
 fn find_device(host: HostId, name: &str) -> Option<cpal::Device> {
@@ -171,25 +238,37 @@ where
                 analyzer.push(s);
                 ring.push(s);
             }
+            ring.note_block(data.len() / channels);
         },
         |err| eprintln!("audio stream error: {err}"),
         None,
     )
 }
 
+/// What the output callback owns.
+struct OutputParts {
+    chime: Chime,
+    /// Bumped once per chime to play; see [`AudioEngine::chime`].
+    chimes: Arc<AtomicU32>,
+    chain: EffectChain,
+    ring: Arc<SampleRing>,
+    amp: Arc<SharedAmp>,
+    /// The first of the two channels to play on.
+    first: usize,
+}
+
 fn build_output<T>(
     device: &cpal::Device,
     config: &StreamConfig,
-    mut chime: Chime,
-    chimes: Arc<AtomicU32>,
-    mut chain: EffectChain,
-    ring: Arc<SampleRing>,
-    amp: Arc<SharedAmp>,
+    parts: OutputParts,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: SizedSample + FromSample<f32>,
 {
+    let OutputParts { mut chime, chimes, mut chain, ring, amp, first } = parts;
     let channels = config.channels.max(1) as usize;
+    // The pair, or just the last channel when the device has an odd one out.
+    let lanes = first..(first + 2).min(channels);
     let mut seen = chimes.load(Ordering::Relaxed);
     let mut env_sq = 0.0_f32;
     device.build_output_stream(
@@ -207,9 +286,9 @@ where
                 let final_sample = (chain_sample * out_gain).clamp(-1.0, 1.0);
                 sum_sq += final_sample * final_sample;
                 let mixed = (final_sample + chime.next_sample()).clamp(-1.0, 1.0);
-                let out = T::from_sample(mixed);
-                let start = frame_idx * channels;
-                data[start..start + channels].fill(out);
+                let frame = &mut data[frame_idx * channels..(frame_idx + 1) * channels];
+                frame.fill(T::EQUILIBRIUM);
+                frame[lanes.clone()].fill(T::from_sample(mixed));
             });
             let block_sq = if total_frames > 0 { sum_sq / total_frames as f32 } else { 0.0 };
             env_sq = if block_sq > env_sq {

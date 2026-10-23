@@ -24,6 +24,11 @@ pub struct AudioSettings {
     pub device: Option<String>,
     /// 0-based input channel.
     pub channel: usize,
+    /// Output device; `None` is the driver's default. Ignored under ASIO,
+    /// where the output is always the input device.
+    pub output: Option<String>,
+    /// 0-based output channel pair: 0 is channels 1-2, 1 is 3-4, ...
+    pub output_pair: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -129,7 +134,13 @@ mod tests {
     fn sample() -> SavedState {
         SavedState {
             version: VERSION,
-            audio: AudioSettings { host: Some("ASIO".into()), device: Some("Scarlett 2i2".into()), channel: 1 },
+            audio: AudioSettings {
+                host: Some("ASIO".into()),
+                device: Some("Scarlett 2i2".into()),
+                channel: 1,
+                output: None,
+                output_pair: 1,
+            },
             ui: UiState::default(),
         }
     }
