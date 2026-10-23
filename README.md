@@ -9,14 +9,6 @@
 
 > [!WARNING]
 > ## ⚠️ AI SLOP WARNING ⚠️
->
-> This entire project was written by an AI (Claude) in a single chat session, with only light
-> human review. The pitch and chord detection are heuristic, and the music theory, scale shapes,
-> chord voicings, and fingerings have **not** been independently checked by a guitar teacher or
-> anyone who knows what they're doing.
->
-> **If a shape feels wrong or hurts your hand:** stop and look up a real chord chart or ask an
-> actual teacher before drilling bad habits into muscle memory.
 
 A hands-free practice app for electric guitar. Plug into an audio interface and Fretwise listens while you play—quizzing you on scales, chords, and fretboard notes without making you take your hands off the neck.
 
