@@ -23,3 +23,6 @@ cpal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true
+
+[build-dependencies]
+winresource = "0.1"
