@@ -1,5 +1,12 @@
 # <img src="assets/logo/fretwise-logo.svg" width="36" height="36" align="top" alt="" /> Fretwise
 
+[![Release build](https://img.shields.io/github/actions/workflow/status/queen-kiki/fretwise/release.yml?label=release%20build)](https://github.com/queen-kiki/fretwise/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/queen-kiki/fretwise)](https://github.com/queen-kiki/fretwise/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/queen-kiki/fretwise/total)](https://github.com/queen-kiki/fretwise/releases)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Made with Rust](https://img.shields.io/badge/made%20with-Rust-dea584?logo=rust)
+[![License: MIT](https://img.shields.io/github/license/queen-kiki/fretwise)](LICENSE)
+
 > [!WARNING]
 > ## ⚠️ AI SLOP WARNING ⚠️
 >
