@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/github/license/queen-kiki/fretwise)](LICENSE)
 
 > [!WARNING]
-> ## ⚠️ AI SLOP WARNING ⚠️
+> ## ⚠️ AI SLOP ⚠️
 
 A hands-free practice app for electric guitar. Plug into an audio interface and Fretwise listens while you play—quizzing you on scales, chords, and fretboard notes without making you take your hands off the neck.
 
