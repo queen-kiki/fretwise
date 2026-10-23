@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, HostId, SampleFormat, SizedSample, StreamConfig};
-use fretwise_core::{Analyzer, AnalyzerConfig, Cabinet, Chime, CleanAmp, EffectChain, SampleRing, SharedAmp, SharedPitch};
+use fretwise_core::{
+    Analyzer, AnalyzerConfig, Cabinet, Chime, CleanAmp, EffectChain, NoiseGate, SampleRing, ScopeTap, SharedAmp,
+    SharedPitch, SharedScope, VintageChorus,
+};
 
 pub struct StreamInfo {
     pub sample_rate: u32,
@@ -18,6 +21,8 @@ pub struct StreamInfo {
 pub struct AudioEngine {
     pub shared: Arc<SharedPitch>,
     pub amp: Arc<SharedAmp>,
+    /// What the rack sends out, for the oscilloscope.
+    pub scope: Arc<SharedScope>,
     ring: Arc<SampleRing>,
     stream: Option<cpal::Stream>,
     pub info: Option<StreamInfo>,
@@ -39,6 +44,7 @@ impl AudioEngine {
         Self {
             shared: Arc::new(SharedPitch::default()),
             amp: Arc::new(SharedAmp::default()),
+            scope: Arc::new(SharedScope::default()),
             // Room for ~85 ms at 96 kHz; the output side keeps only a small
             // cushion of it queued (see `EffectChain::process_from_ring`).
             ring: Arc::new(SampleRing::new(8192)),
@@ -110,8 +116,12 @@ impl AudioEngine {
         let config: StreamConfig = supported.config();
         let sr = config.sample_rate.0 as f32;
         let mut chain = EffectChain::new(sr, 512);
+        // The IN meter's gate mutes the DI too, not just pitch detection.
+        chain.push(Box::new(NoiseGate::new(sr, self.shared.clone())));
         chain.push(Box::new(CleanAmp::new(sr, self.amp.clone())));
         chain.push(Box::new(Cabinet::new(sr, self.amp.clone())));
+        chain.push_stereo(Box::new(VintageChorus::new(sr, self.amp.clone())));
+        chain.push_stereo(Box::new(ScopeTap::new(sr, self.scope.clone())));
         let channels = config.channels.max(1) as usize;
         let parts = OutputParts {
             chime: Chime::new(sr),
@@ -253,7 +263,7 @@ struct OutputParts {
     chain: EffectChain,
     ring: Arc<SampleRing>,
     amp: Arc<SharedAmp>,
-    /// The first of the two channels to play on.
+    /// The first of the two channels to play on: left, then right.
     first: usize,
 }
 
@@ -267,8 +277,9 @@ where
 {
     let OutputParts { mut chime, chimes, mut chain, ring, amp, first } = parts;
     let channels = config.channels.max(1) as usize;
-    // The pair, or just the last channel when the device has an odd one out.
-    let lanes = first..(first + 2).min(channels);
+    // The pair, or just the last channel (taking both sides) when the device
+    // has an odd one out.
+    let stereo = first + 1 < channels;
     let mut seen = chimes.load(Ordering::Relaxed);
     let mut env_sq = 0.0_f32;
     device.build_output_stream(
@@ -282,13 +293,19 @@ where
             let total_frames = data.len() / channels;
             let out_gain = 10.0_f32.powf(amp.load().out_gain_db / 20.0);
             let mut sum_sq = 0.0_f32;
-            chain.process_from_ring(&ring, total_frames, |frame_idx, chain_sample| {
-                let final_sample = (chain_sample * out_gain).clamp(-1.0, 1.0);
-                sum_sq += final_sample * final_sample;
-                let mixed = (final_sample + chime.next_sample()).clamp(-1.0, 1.0);
+            chain.process_from_ring(&ring, total_frames, |frame_idx, left, right| {
+                let left = (left * out_gain).clamp(-1.0, 1.0);
+                let right = (right * out_gain).clamp(-1.0, 1.0);
+                sum_sq += 0.5 * (left * left + right * right);
+                let chime = chime.next_sample();
                 let frame = &mut data[frame_idx * channels..(frame_idx + 1) * channels];
                 frame.fill(T::EQUILIBRIUM);
-                frame[lanes.clone()].fill(T::from_sample(mixed));
+                if stereo {
+                    frame[first] = T::from_sample((left + chime).clamp(-1.0, 1.0));
+                    frame[first + 1] = T::from_sample((right + chime).clamp(-1.0, 1.0));
+                } else {
+                    frame[first] = T::from_sample((0.5 * (left + right) + chime).clamp(-1.0, 1.0));
+                }
             });
             let block_sq = if total_frames > 0 { sum_sq / total_frames as f32 } else { 0.0 };
             env_sq = if block_sq > env_sq {

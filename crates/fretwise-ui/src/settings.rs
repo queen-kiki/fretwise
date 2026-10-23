@@ -20,8 +20,8 @@ impl FretwiseUi {
                 ui.spacing_mut().item_spacing.x = 16.0;
                 let gates = *GATE_RANGE_DB.start() as i32..=*GATE_RANGE_DB.end() as i32;
                 stepped_knob(ui, "gate", "Gate", &mut self.gate_db, gates, |db| format!("{db} dB"));
-                let hint = "Quieter input is ignored, so hum and string noise don't count as notes. \
-                            The IN meter turns grey below it.";
+                let hint = "Quieter input is ignored and muted on the amp, so hum and string noise \
+                            don't count as notes or reach your ears. The IN meter turns grey below it.";
                 ui.add(egui::Label::new(RichText::new(hint).weak().size(12.0)).wrap());
             });
 

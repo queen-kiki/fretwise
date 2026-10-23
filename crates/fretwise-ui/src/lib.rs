@@ -18,6 +18,7 @@ mod icons;
 mod learn;
 mod notes;
 mod parts;
+mod scope;
 mod settings;
 mod stats;
 mod theme;
@@ -31,6 +32,7 @@ use fretwise_core::{
 use serde::{Deserialize, Serialize};
 
 use parts::NECK_FRETS;
+use scope::{ScopeConfig, ScopeScreen};
 
 pub use theme::BAD;
 use theme::rack_fill;
@@ -96,6 +98,10 @@ pub struct FretwiseUi {
     amp: AmpConfig,
     /// The host's output level (dBFS), for the OUT meter.
     out_level_db: f32,
+    /// What the host's rack sends out, for the oscilloscope; none without audio.
+    scope: Option<std::sync::Arc<fretwise_core::SharedScope>>,
+    scope_cfg: ScopeConfig,
+    scope_screen: ScopeScreen,
     /// Input gate (dBFS), for the host to pass on to the analyzer.
     gate_db: f32,
     tuning: Tuning,
@@ -132,6 +138,9 @@ impl Default for FretwiseUi {
             gate_db: DEFAULT_GATE_DB,
             amp: AmpConfig::default(),
             out_level_db: -100.0,
+            scope: None,
+            scope_cfg: ScopeConfig::default(),
+            scope_screen: ScopeScreen::default(),
             tuning: Tuning::STANDARD,
             stabilizer: NoteStabilizer::default(),
             trainer: Trainer::new(Tuning::STANDARD, TrainerConfig::default(), seed),
@@ -154,6 +163,8 @@ pub struct UiState {
     tab: Tab,
     a4: f32,
     amp: AmpConfig,
+    /// The rack oscilloscope's front panel.
+    scope: ScopeConfig,
     /// Input gate in dBFS: quieter input is ignored.
     gate_db: f32,
     /// Open strings, lowest first; matched against [`Tuning::ALL`] on load.
@@ -194,6 +205,7 @@ impl FretwiseUi {
             a4: if (415.0..=466.0).contains(&state.a4) { state.a4 } else { defaults.a4 },
             gate_db: if GATE_RANGE_DB.contains(&state.gate_db) { state.gate_db } else { defaults.gate_db },
             amp: state.amp.sanitized(),
+            scope_cfg: state.scope.sanitized(),
             tuning: Tuning::from_strings(state.tuning).unwrap_or(Tuning::STANDARD),
             chime_enabled: state.chime,
             show_pattern: state.show_pattern,
@@ -224,6 +236,7 @@ impl FretwiseUi {
             a4: self.a4,
             gate_db: self.gate_db,
             amp: self.amp,
+            scope: self.scope_cfg,
             tuning: self.tuning.strings,
             trainer: self.trainer.config,
             progress: self.trainer.progress(),
@@ -244,6 +257,12 @@ impl FretwiseUi {
     /// every frame with [`fretwise_core::SharedAmp::store`].
     pub fn amp(&self) -> AmpConfig {
         self.amp
+    }
+
+    /// Where to read what the effect chain sends out, for the rack's
+    /// oscilloscope (put a [`fretwise_core::ScopeTap`] at the end of the chain).
+    pub fn set_scope(&mut self, scope: std::sync::Arc<fretwise_core::SharedScope>) {
+        self.scope = Some(scope);
     }
 
     /// The level (dBFS) the host is sending out, for the OUT meter.

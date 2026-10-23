@@ -8,16 +8,21 @@ use egui::{
 };
 use std::ops::RangeInclusive;
 
-use fretwise_core::{AMP_GAIN_RANGE_DB, AMP_LEVEL_RANGE_DB, AMP_TONE_RANGE, CAB_MIC_RANGE};
+use fretwise_core::{
+    VintageChorus, AMP_GAIN_RANGE_DB, AMP_LEVEL_RANGE_DB, AMP_TONE_RANGE, CAB_MIC_RANGE, CHORUS_DEPTH_RANGE,
+    CHORUS_MIX_RANGE, CHORUS_RATE_RANGE,
+};
 
+use crate::scope;
 use crate::theme::{self, GOOD, HEARD, TRANS_BLUE, TRANS_PINK};
 use crate::widgets::stepped_knob;
 use crate::FretwiseUi;
 
 /// Height added to the viewport when the effects pane is open.
-pub(crate) const FX_PANE_SPACE: f32 = 178.0;
+pub(crate) const FX_PANE_SPACE: f32 = CARD_HEIGHT + 30.0;
 
-const CARD_HEIGHT: f32 = 148.0;
+/// Every device is this tall: the height of the square oscilloscope.
+const CARD_HEIGHT: f32 = 236.0;
 const HEADER_HEIGHT: f32 = 28.0;
 
 impl FretwiseUi {
@@ -36,6 +41,12 @@ impl FretwiseUi {
                     paint_chain_arrow(ui, self.amp.enabled && self.amp.cab_enabled);
 
                     self.cabinet_plate(ui);
+                    paint_chain_arrow(ui, self.amp.enabled && self.amp.chorus_enabled);
+
+                    self.chorus_plate(ui);
+                    paint_chain_arrow(ui, self.amp.enabled);
+
+                    self.scope_plate(ui);
                     paint_chain_arrow(ui, self.amp.enabled);
 
                     paint_io_strip(ui, "OUT", self.amp.enabled);
@@ -160,6 +171,107 @@ impl FretwiseUi {
             };
             stepped_knob(ui, "cab_mic", "Mic Pos", &mut self.amp.cab_mic, CAB_MIC_RANGE, position);
         });
+    }
+
+    /// Front plate 3: "LILAC BRIGADE" stereo bucket-brigade chorus.
+    fn chorus_plate(&mut self, ui: &mut Ui) {
+        let width = 412.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(width, CARD_HEIGHT), Sense::hover());
+        let dark = ui.visuals().dark_mode;
+        let active = self.amp.enabled && self.amp.chorus_enabled;
+
+        let colors = if dark {
+            ShellColors {
+                body: Color32::from_rgb(32, 28, 44),
+                header: Color32::from_rgb(46, 40, 64),
+                border: if active { Color32::from_rgb(132, 110, 190) } else { Color32::from_rgb(62, 56, 78) },
+                trim: Color32::from_rgb(178, 150, 255),
+            }
+        } else {
+            ShellColors {
+                body: Color32::from_rgb(246, 243, 254),
+                header: Color32::from_rgb(230, 222, 250),
+                border: if active { Color32::from_rgb(158, 132, 222) } else { Color32::from_rgb(214, 208, 228) },
+                trim: Color32::from_rgb(120, 86, 210),
+            }
+        };
+        let header_clicked =
+            paint_device_shell(ui, rect, "chorus_power", active, ("LILAC BRIGADE", "STEREO BBD CHORUS"), colors);
+        if header_clicked && self.amp.enabled {
+            self.amp.chorus_enabled = !self.amp.chorus_enabled;
+        }
+
+        let body_rect = Rect::from_min_max(pos2(rect.left(), rect.top() + HEADER_HEIGHT), rect.max);
+
+        // Left side: the BBD chip with its two sweeping taps and rate LED.
+        let art_rect = Rect::from_min_size(
+            pos2(body_rect.left() + 14.0, body_rect.top() + 12.0),
+            vec2(88.0, body_rect.height() - 24.0),
+        );
+        let now = ui.input(|i| i.time);
+        let lfo_phase = (now * VintageChorus::rate_hz(self.amp.chorus_rate) as f64).fract() as f32;
+        let depth = normalized(self.amp.chorus_depth, &CHORUS_DEPTH_RANGE);
+        paint_bbd_window(ui.painter(), art_rect, active, lfo_phase, depth);
+
+        // Right side: RATE, DEPTH, MIX, lined up with the amp head's knobs.
+        let y = body_rect.center().y - 54.0;
+        let x0 = art_rect.right() + 10.0;
+        let knob_slot = |ui: &mut Ui, x: f32| {
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(pos2(x, y), vec2(92.0, 108.0)))
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            )
+        };
+        let amp = &mut self.amp;
+        knob_slot(ui, x0).add_enabled_ui(active, |ui| {
+            let label = |r: i32| format!("{:.2} Hz", VintageChorus::rate_hz(r as f32));
+            stepped_knob(ui, "chorus_rate", "Rate", &mut amp.chorus_rate, CHORUS_RATE_RANGE, label);
+        });
+        knob_slot(ui, x0 + 98.0).add_enabled_ui(active, |ui| {
+            stepped_knob(ui, "chorus_depth", "Depth", &mut amp.chorus_depth, CHORUS_DEPTH_RANGE, |d| d.to_string());
+        });
+        knob_slot(ui, x0 + 196.0).add_enabled_ui(active, |ui| {
+            let label = |m: i32| format!("{}%", m * 10);
+            stepped_knob(ui, "chorus_mix", "Mix", &mut amp.chorus_mix, CHORUS_MIX_RANGE, label);
+        });
+    }
+
+    /// Front plate 4: "PHOSPHOR 2CH" electron-tube stereo oscilloscope: a
+    /// square unit that is nearly all screen, set up by dragging the read-outs
+    /// on the glass. It only watches, so its power switch works with the amp
+    /// off too.
+    fn scope_plate(&mut self, ui: &mut Ui) {
+        let (rect, _) = ui.allocate_exact_size(vec2(CARD_HEIGHT, CARD_HEIGHT), Sense::hover());
+        let dark = ui.visuals().dark_mode;
+        let on = self.scope_cfg.enabled;
+
+        let colors = if dark {
+            ShellColors {
+                body: Color32::from_rgb(28, 32, 30),
+                header: Color32::from_rgb(40, 46, 43),
+                border: if on { Color32::from_rgb(88, 150, 112) } else { Color32::from_rgb(56, 64, 60) },
+                trim: Color32::from_rgb(70, 255, 130),
+            }
+        } else {
+            ShellColors {
+                body: Color32::from_rgb(240, 245, 241),
+                header: Color32::from_rgb(220, 232, 224),
+                border: if on { Color32::from_rgb(110, 190, 140) } else { Color32::from_rgb(204, 214, 208) },
+                trim: Color32::from_rgb(40, 170, 90),
+            }
+        };
+        let now = ui.input(|i| i.time);
+        if paint_device_shell(ui, rect, "scope_power", on, ("PHOSPHOR 2CH", "TUBE SCOPE"), colors) {
+            self.scope_cfg.enabled = !on;
+            self.scope_screen.power_changed(!on, now);
+        }
+
+        let body_rect = Rect::from_min_max(pos2(rect.left(), rect.top() + HEADER_HEIGHT), rect.max);
+        let side = body_rect.height() - 20.0;
+        let crt_rect = Rect::from_center_size(body_rect.center(), vec2(side, side));
+        let scope = self.scope.as_deref();
+        scope::crt(ui, crt_rect, scope, &mut self.scope_cfg, &mut self.scope_screen, now);
     }
 }
 
@@ -297,8 +409,9 @@ fn paint_tube_window(painter: &Painter, rect: Rect, enabled: bool, drive_norm: f
     let glow_strength = if enabled { 0.45 + 0.55 * drive_norm } else { 0.0 };
     for offset_x in [-18.0_f32, 18.0_f32] {
         let cx = rect.center().x + offset_x;
-        let top = rect.top() + 14.0;
-        let bot = rect.bottom() - 24.0;
+        // Tube-shaped whatever the plate height: centred, about 70 pt tall.
+        let top = (rect.center().y - 40.0).max(rect.top() + 14.0);
+        let bot = (rect.center().y + 30.0).min(rect.bottom() - 24.0);
         let tube_rect = Rect::from_min_max(pos2(cx - 10.0, top), pos2(cx + 10.0, bot));
 
         if enabled {
@@ -407,6 +520,69 @@ fn paint_speaker_cone(painter: &Painter, rect: Rect, active: bool, mic_norm: f32
         pos2(rect.center().x, rect.bottom() - 8.0),
         Align2::CENTER_CENTER,
         "12\" ALNICO",
+        FontId::proportional(9.5),
+        Color32::from_gray(155),
+    );
+}
+
+/// The chorus faceplate window: a bucket-brigade chip behind glass, its two
+/// delay taps swept in opposite phase, and a rate LED pulsing with the LFO.
+fn paint_bbd_window(painter: &Painter, rect: Rect, active: bool, lfo_phase: f32, depth: f32) {
+    painter.rect_filled(rect, 6.0, Color32::from_rgb(15, 12, 22));
+    let violet = Color32::from_rgb(178, 150, 255);
+
+    // The BBD chip: a DIP package with its pins.
+    // Chip and sweep track together, centred in the window.
+    let chip = Rect::from_center_size(pos2(rect.center().x, rect.center().y - 30.0), vec2(48.0, 20.0));
+    for i in 0..6 {
+        let x = chip.left() + 6.0 + i as f32 * 7.2;
+        for (y0, y1) in [(chip.top() - 4.0, chip.top()), (chip.bottom(), chip.bottom() + 4.0)] {
+            painter.line_segment([pos2(x, y0), pos2(x, y1)], Stroke::new(1.6_f32, Color32::from_gray(120)));
+        }
+    }
+    painter.rect_filled(chip, 2.0, Color32::from_rgb(34, 32, 38));
+    painter.circle_filled(chip.left_center() + vec2(4.0, 0.0), 2.0, Color32::from_gray(20));
+    painter.text(chip.center(), Align2::CENTER_CENTER, "BBD 1024", FontId::monospace(7.5), Color32::from_gray(150));
+
+    // Sweep track: the two taps ride one triangle LFO, half a cycle apart.
+    let track = Rect::from_min_max(
+        pos2(rect.left() + 10.0, chip.bottom() + 14.0),
+        pos2(rect.right() - 10.0, chip.bottom() + 40.0),
+    );
+    let swing = track.height() * 0.5 * depth.max(0.1);
+    let tri = |p: f32| 1.0 - 4.0 * ((p + 0.25).fract() - 0.5).abs();
+    let at = |t: f32| pos2(track.left() + t * track.width(), track.center().y - tri(t) * swing);
+    let wave: Vec<_> = (0..=40).map(|i| at(i as f32 / 40.0)).collect();
+    let line_col = if active { violet.gamma_multiply(0.45) } else { Color32::from_gray(60) };
+    painter.add(egui::Shape::line(wave, Stroke::new(1.2_f32, line_col)));
+    for (offset, col) in [(0.0, TRANS_PINK), (0.5, TRANS_BLUE)] {
+        let p = at((lfo_phase + offset).fract());
+        if active {
+            painter.circle_filled(p, 5.0, col.gamma_multiply(0.3));
+            painter.circle_filled(p, 2.6, col);
+        } else {
+            painter.circle_filled(p, 2.6, Color32::from_gray(70));
+        }
+    }
+    let side_label = FontId::proportional(8.0);
+    painter.text(track.left_bottom() + vec2(0.0, 6.0), Align2::LEFT_CENTER, "L", side_label.clone(), TRANS_PINK);
+    painter.text(track.right_bottom() + vec2(0.0, 6.0), Align2::RIGHT_CENTER, "R", side_label, TRANS_BLUE);
+
+    // Rate LED, brightest at the top of each LFO cycle.
+    let led = pos2(rect.right() - 10.0, rect.top() + 9.0);
+    if active {
+        let pulse = 0.25 + 0.75 * tri(lfo_phase).max(0.0);
+        painter.circle_filled(led, 5.0, violet.gamma_multiply(0.3 * pulse));
+        painter.circle_filled(led, 2.6, violet.gamma_multiply(pulse));
+    } else {
+        painter.circle_filled(led, 2.6, Color32::from_gray(50));
+    }
+
+    painter.rect_stroke(rect, 6.0, Stroke::new(1.0_f32, Color32::from_white_alpha(35)), StrokeKind::Inside);
+    painter.text(
+        pos2(rect.center().x, rect.bottom() - 8.0),
+        Align2::CENTER_CENTER,
+        "2× SWEEP",
         FontId::proportional(9.5),
         Color32::from_gray(155),
     );

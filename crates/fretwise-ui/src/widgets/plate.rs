@@ -163,6 +163,7 @@ fn segment14_mask(ch: char) -> u16 {
         '/' => J | M,
         '\\' => H | K,
         '_' => D,
+        '%' => F | C | J | M,
         '#' | '♯' => G1 | G2 | I | L | B | E,
         '*' => G1 | G2 | I | L | H | J | K | M,
         // Keep lowercase 'd' and 'b' distinct for "dB" / flat readouts, uppercase for the rest
@@ -204,7 +205,19 @@ fn segment14_mask(ch: char) -> u16 {
 /// slightly lighter unlit segments, and a glowing pink active readout.
 pub fn paint_segment_screen(ui: &Ui, center: egui::Pos2, text: &str, hot: bool) {
     let painter = ui.painter();
-    let chars: Vec<char> = text.chars().collect();
+    // A '.' lights the decimal point after the character before it, as on
+    // real LED read-outs, rather than taking a cell of its own.
+    let mut chars: Vec<char> = Vec::new();
+    let mut points: Vec<bool> = Vec::new();
+    for c in text.chars() {
+        match (c, points.last_mut()) {
+            ('.', Some(dp)) if !*dp => *dp = true,
+            _ => {
+                chars.push(c);
+                points.push(false);
+            }
+        }
+    }
     let cells = chars.len().max(6);
     let pad_left = (cells - chars.len()) / 2;
 
@@ -254,10 +267,10 @@ pub fn paint_segment_screen(ui: &Ui, center: egui::Pos2, text: &str, hot: bool) 
     };
 
     for idx in 0..cells {
-        let mask = if idx >= pad_left && idx < pad_left + chars.len() {
-            segment14_mask(chars[idx - pad_left])
+        let (mask, dp) = if idx >= pad_left && idx < pad_left + chars.len() {
+            (segment14_mask(chars[idx - pad_left]), points[idx - pad_left])
         } else {
-            0
+            (0, false)
         };
         let x0 = start_x + idx as f32 * (cw + gap);
         let x1 = x0 + cw;
@@ -293,6 +306,14 @@ pub fn paint_segment_screen(ui: &Ui, center: egui::Pos2, text: &str, hot: bool) 
                 painter.line_segment(pts, Stroke::new(3.2_f32, glow_col));
                 painter.line_segment(pts, Stroke::new(1.5_f32, lit_col));
             }
+        }
+        // 3. Decimal point, in the gap after the character
+        let dp_pos = pos2(x1 + gap * 0.5, y1);
+        if dp {
+            painter.circle_filled(dp_pos, 1.6, glow_col);
+            painter.circle_filled(dp_pos, 0.9, lit_col);
+        } else {
+            painter.circle_filled(dp_pos, 0.6, ghost_col);
         }
     }
 }

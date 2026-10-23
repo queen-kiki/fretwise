@@ -28,11 +28,32 @@ pub trait Effect: Send {
     fn process(&mut self, samples: &mut [f32]);
 }
 
-/// An ordered series of [`Effect`] plugins processed in-place on the audio thread.
+/// A realtime-safe stereo effect, run after every mono [`Effect`] in an
+/// [`EffectChain`]. The first one receives the mono signal on both sides.
+///
+/// The same rules as [`Effect::process`] apply: no allocating, locking or blocking.
+pub trait StereoEffect: Send {
+    /// Human-readable name of the effect (e.g. `"Vintage Chorus"`).
+    fn name(&self) -> &str;
+
+    /// Called when the audio stream starts or changes sample rate.
+    fn prepare(&mut self, sample_rate: f32);
+
+    /// Clear internal filter / delay-line state without changing parameters.
+    fn reset(&mut self);
+
+    /// Process a block of left and right samples (of equal length) in-place.
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]);
+}
+
+/// An ordered series of [`Effect`] plugins processed in-place on the audio
+/// thread: the mono effects first, then the [`StereoEffect`]s.
 pub struct EffectChain {
     sample_rate: f32,
     effects: Vec<Box<dyn Effect>>,
+    stereo: Vec<Box<dyn StereoEffect>>,
     scratch: Vec<f32>,
+    scratch_right: Vec<f32>,
     reader: RingReader,
 }
 
@@ -42,7 +63,9 @@ impl EffectChain {
         Self {
             sample_rate,
             effects: Vec::new(),
+            stereo: Vec::new(),
             scratch: Vec::with_capacity(max_block_size),
+            scratch_right: Vec::with_capacity(max_block_size),
             reader: RingReader::default(),
         }
     }
@@ -53,10 +76,20 @@ impl EffectChain {
         self.effects.push(effect);
     }
 
+    /// Append a stereo effect after every mono one (and the stereo ones
+    /// already added) and prepare it at the chain's sample rate.
+    pub fn push_stereo(&mut self, mut effect: Box<dyn StereoEffect>) {
+        effect.prepare(self.sample_rate);
+        self.stereo.push(effect);
+    }
+
     /// Update the sample rate for all effects in the chain.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         for effect in &mut self.effects {
+            effect.prepare(sample_rate);
+        }
+        for effect in &mut self.stereo {
             effect.prepare(sample_rate);
         }
     }
@@ -66,9 +99,13 @@ impl EffectChain {
         for effect in &mut self.effects {
             effect.reset();
         }
+        for effect in &mut self.stereo {
+            effect.reset();
+        }
     }
 
-    /// Process a slice of mono samples in-place through every effect in order.
+    /// Process a slice of mono samples in-place through every mono effect in
+    /// order (the stereo ones run in [`EffectChain::process_from_ring`]).
     #[inline]
     pub fn process(&mut self, samples: &mut [f32]) {
         for effect in &mut self.effects {
@@ -77,7 +114,7 @@ impl EffectChain {
     }
 
     /// Pull `total_frames` mono samples from `ring`, run them through the
-    /// effect chain, and call `emit(i, sample)` for each processed sample.
+    /// effect chain, and call `emit(i, left, right)` for each processed frame.
     ///
     /// The input runs on its own clock, often at another rate (another
     /// device, or ASIO at 44.1 kHz into a 48 kHz output), so a [`RingReader`]
@@ -88,7 +125,7 @@ impl EffectChain {
     /// the audio callback never allocates even if the host requests a large buffer.
     pub fn process_from_ring<F>(&mut self, ring: &SampleRing, total_frames: usize, mut emit: F)
     where
-        F: FnMut(usize, f32),
+        F: FnMut(usize, f32, f32),
     {
         let cap = self.scratch.capacity().max(64);
         let step = self.reader.plan(ring, total_frames, self.sample_rate);
@@ -103,8 +140,13 @@ impl EffectChain {
             for effect in &mut self.effects {
                 effect.process(&mut self.scratch);
             }
-            for (i, &s) in self.scratch.iter().enumerate() {
-                emit(offset + i, s);
+            self.scratch_right.clear();
+            self.scratch_right.extend_from_slice(&self.scratch);
+            for effect in &mut self.stereo {
+                effect.process(&mut self.scratch, &mut self.scratch_right);
+            }
+            for (i, (&l, &r)) in self.scratch.iter().zip(&self.scratch_right).enumerate() {
+                emit(offset + i, l, r);
             }
             offset += chunk;
         }
@@ -338,12 +380,23 @@ pub struct AmpConfig {
     pub cab_mic: f32,
     /// Final master output gain in dB (`-24.0..=6.0`), applied after the entire effect chain.
     pub out_gain_db: f32,
+    /// Whether the stereo vintage chorus is active.
+    pub chorus_enabled: bool,
+    /// Chorus LFO rate step (`1.0..=10.0`, about 0.15 Hz to 6 Hz).
+    pub chorus_rate: f32,
+    /// Chorus modulation depth (`0.0..=10.0`).
+    pub chorus_depth: f32,
+    /// Chorus wet/dry mix (`0.0..=10.0`, where 10 is the classic even blend).
+    pub chorus_mix: f32,
 }
 
 pub const AMP_GAIN_RANGE_DB: std::ops::RangeInclusive<i32> = 0..=24;
 pub const AMP_TONE_RANGE: std::ops::RangeInclusive<i32> = -5..=5;
 pub const AMP_LEVEL_RANGE_DB: std::ops::RangeInclusive<i32> = -24..=6;
 pub const CAB_MIC_RANGE: std::ops::RangeInclusive<i32> = -5..=5;
+pub const CHORUS_RATE_RANGE: std::ops::RangeInclusive<i32> = 1..=10;
+pub const CHORUS_DEPTH_RANGE: std::ops::RangeInclusive<i32> = 0..=10;
+pub const CHORUS_MIX_RANGE: std::ops::RangeInclusive<i32> = 0..=10;
 pub const OUT_GAIN_RANGE_DB: std::ops::RangeInclusive<f32> = -24.0..=6.0;
 
 impl Default for AmpConfig {
@@ -356,6 +409,10 @@ impl Default for AmpConfig {
             cab_enabled: true,
             cab_mic: 0.0,
             out_gain_db: 0.0,
+            chorus_enabled: false,
+            chorus_rate: 3.0,
+            chorus_depth: 6.0,
+            chorus_mix: 8.0,
         }
     }
 }
@@ -376,6 +433,9 @@ impl AmpConfig {
             tone: within(self.tone, AMP_TONE_RANGE, d.tone),
             level_db: within(self.level_db, AMP_LEVEL_RANGE_DB, d.level_db),
             cab_mic: within(self.cab_mic, CAB_MIC_RANGE, d.cab_mic),
+            chorus_rate: within(self.chorus_rate, CHORUS_RATE_RANGE, d.chorus_rate),
+            chorus_depth: within(self.chorus_depth, CHORUS_DEPTH_RANGE, d.chorus_depth),
+            chorus_mix: within(self.chorus_mix, CHORUS_MIX_RANGE, d.chorus_mix),
             out_gain_db: if OUT_GAIN_RANGE_DB.contains(&self.out_gain_db) { self.out_gain_db } else { d.out_gain_db },
             ..self
         }
@@ -391,6 +451,10 @@ pub struct SharedAmp {
     cab_enabled: AtomicBool,
     cab_mic: AtomicU32,
     out_gain_db: AtomicU32,
+    chorus_enabled: AtomicBool,
+    chorus_rate: AtomicU32,
+    chorus_depth: AtomicU32,
+    chorus_mix: AtomicU32,
     out_level_db: AtomicU32,
 }
 
@@ -405,6 +469,10 @@ impl Default for SharedAmp {
             cab_enabled: AtomicBool::new(cfg.cab_enabled),
             cab_mic: AtomicU32::new(cfg.cab_mic.to_bits()),
             out_gain_db: AtomicU32::new(cfg.out_gain_db.to_bits()),
+            chorus_enabled: AtomicBool::new(cfg.chorus_enabled),
+            chorus_rate: AtomicU32::new(cfg.chorus_rate.to_bits()),
+            chorus_depth: AtomicU32::new(cfg.chorus_depth.to_bits()),
+            chorus_mix: AtomicU32::new(cfg.chorus_mix.to_bits()),
             out_level_db: AtomicU32::new((-100.0_f32).to_bits()),
         }
     }
@@ -420,6 +488,10 @@ impl SharedAmp {
         self.cab_enabled.store(cfg.cab_enabled, Ordering::Relaxed);
         self.cab_mic.store(cfg.cab_mic.to_bits(), Ordering::Relaxed);
         self.out_gain_db.store(cfg.out_gain_db.to_bits(), Ordering::Relaxed);
+        self.chorus_enabled.store(cfg.chorus_enabled, Ordering::Relaxed);
+        self.chorus_rate.store(cfg.chorus_rate.to_bits(), Ordering::Relaxed);
+        self.chorus_depth.store(cfg.chorus_depth.to_bits(), Ordering::Relaxed);
+        self.chorus_mix.store(cfg.chorus_mix.to_bits(), Ordering::Relaxed);
     }
 
     pub fn load(&self) -> AmpConfig {
@@ -431,6 +503,10 @@ impl SharedAmp {
             cab_enabled: self.cab_enabled.load(Ordering::Relaxed),
             cab_mic: f32::from_bits(self.cab_mic.load(Ordering::Relaxed)),
             out_gain_db: f32::from_bits(self.out_gain_db.load(Ordering::Relaxed)),
+            chorus_enabled: self.chorus_enabled.load(Ordering::Relaxed),
+            chorus_rate: f32::from_bits(self.chorus_rate.load(Ordering::Relaxed)),
+            chorus_depth: f32::from_bits(self.chorus_depth.load(Ordering::Relaxed)),
+            chorus_mix: f32::from_bits(self.chorus_mix.load(Ordering::Relaxed)),
         }
     }
 
@@ -445,7 +521,7 @@ impl SharedAmp {
 
 /// Direct-Form II Transposed 2nd-order biquad filter.
 #[derive(Clone, Copy, Default)]
-struct Biquad {
+pub(crate) struct Biquad {
     b0: f32,
     b1: f32,
     b2: f32,
@@ -457,14 +533,14 @@ struct Biquad {
 
 impl Biquad {
     #[inline]
-    fn process(&mut self, x: f32) -> f32 {
+    pub(crate) fn process(&mut self, x: f32) -> f32 {
         let y = self.b0 * x + self.z1;
         self.z1 = self.b1 * x - self.a1 * y + self.z2;
         self.z2 = self.b2 * x - self.a2 * y;
         y
     }
 
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.z1 = 0.0;
         self.z2 = 0.0;
     }
@@ -478,7 +554,7 @@ impl Biquad {
         self.a2 = a2 * inv_a0;
     }
 
-    fn set_highpass(&mut self, sr: f32, freq: f32, q: f32) {
+    pub(crate) fn set_highpass(&mut self, sr: f32, freq: f32, q: f32) {
         let w0 = TAU * freq.clamp(10.0, sr * 0.45) / sr;
         let (sin_w0, cos_w0) = w0.sin_cos();
         let alpha = sin_w0 / (2.0 * q);
@@ -491,7 +567,7 @@ impl Biquad {
         self.set_normalized(b0, b1, b2, a0, a1, a2);
     }
 
-    fn set_lowpass(&mut self, sr: f32, freq: f32, q: f32) {
+    pub(crate) fn set_lowpass(&mut self, sr: f32, freq: f32, q: f32) {
         let w0 = TAU * freq.clamp(40.0, sr * 0.45) / sr;
         let (sin_w0, cos_w0) = w0.sin_cos();
         let alpha = sin_w0 / (2.0 * q);
@@ -792,7 +868,7 @@ mod tests {
         }
         let mut chain = EffectChain::new(48_000.0, 128);
         let mut out = Vec::new();
-        chain.process_from_ring(&ring, 40, |_, s| out.push(s));
+        chain.process_from_ring(&ring, 40, |_, s, _| out.push(s));
         // The first few interpolate from the silence before the ramp's 0.
         assert!(out[4..].windows(2).all(|w| (w[1] - w[0] - 0.5).abs() < 0.01), "{out:?}");
 
@@ -803,7 +879,7 @@ mod tests {
             ring.push(i as f32);
         }
         let mut out = Vec::new();
-        chain.process_from_ring(&ring, 40, |_, s| out.push(s));
+        chain.process_from_ring(&ring, 40, |_, s, _| out.push(s));
         assert!(out[4..].windows(2).all(|w| (w[1] - w[0] - 1.0).abs() < 0.02), "{out:?}");
     }
 
@@ -843,7 +919,7 @@ mod tests {
                 n_in += 1.0;
                 next_in = n_in * in_period + jitter();
             } else {
-                chain.process_from_ring(&ring, out_block, |_, s| out.push(s));
+                chain.process_from_ring(&ring, out_block, |_, s, _| out.push(s));
                 n_out += 1.0;
                 next_out = 4_000.0 + n_out * out_period + jitter();
             }
@@ -886,7 +962,7 @@ mod tests {
             }
             ring.note_block(128);
             queued.push(ring.available());
-            chain.process_from_ring(&ring, 128, |_, _| {});
+            chain.process_from_ring(&ring, 128, |_, _, _| {});
         }
         // Queue beyond the block being read, over the last 5 s, in ms.
         let tail = &queued[queued.len() / 2..];

@@ -76,7 +76,7 @@ impl FretwiseUi {
 
                 // Amp/Output section (left-to-right visually: OUT [out meter] [0|I switch] [amp settings icon])
                 if amp_button(ui, self.amp_open, self.amp.enabled)
-                    .on_hover_text("Effects rack: amp and cabinet settings")
+                    .on_hover_text("Effects rack: amp, cabinet, chorus and scope")
                     .clicked()
                 {
                     self.amp_open = !self.amp_open;

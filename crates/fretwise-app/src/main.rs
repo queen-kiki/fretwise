@@ -62,9 +62,11 @@ impl App {
             output_error: None,
         };
         audio.restart();
+        let mut ui = FretwiseUi::from_state(saved.ui);
+        ui.set_scope(audio.engine.scope.clone());
         Self {
             audio,
-            ui: FretwiseUi::from_state(saved.ui),
+            ui,
             store,
             last_save: 0.0,
         }

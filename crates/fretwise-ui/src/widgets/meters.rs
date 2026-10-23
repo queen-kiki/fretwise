@@ -41,7 +41,7 @@ pub fn tuner_gauge(ui: &mut Ui, cents: Option<f32>) {
 /// Interactive LED input meter (-80..0 dBFS) with a draggable **Gate Bracket** (`[`).
 ///
 /// Dragging or scrolling adjusts `gate_db` within [`GATE_RANGE_DB`] (-80..-30 dBFS).
-/// Signal below the gate bracket is shaded and ignored by pitch detection.
+/// Signal below the gate bracket is shaded, ignored by pitch detection and muted on the monitored DI.
 pub fn level_meter(ui: &mut Ui, level_db: f32, gate_db: &mut f32) -> Response {
     let min_db = *GATE_RANGE_DB.start();
     let span_db = -min_db;
